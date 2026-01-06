@@ -139,6 +139,8 @@ local sourceAvatarItems = {}
 
 -- Store original player data for reverting
 local originalPlayerData = {}
+-- Store modified players for lookup by original name
+local modifiedPlayers = {}
 
 -- Respawn handling toggle (can be disabled for problematic games)
 local autoRespawnEnabled = true
@@ -544,7 +546,6 @@ end
 -- Store original player properties before modifying
 local function storeOriginalPlayerData(player)
 	if originalPlayerData[player.UserId] then 
-		print("Original data already stored for", player.Name)
 		return 
 	end
 	
@@ -559,10 +560,6 @@ local function storeOriginalPlayerData(player)
 		humanoidDisplayName = humanoid and humanoid.DisplayName or player.DisplayName
 	}
 	
-	print("=== Stored Original Player Data ===")
-	print("UserId:", player.UserId)
-	print("Original Name:", player.Name)
-	print("Original DisplayName:", player.DisplayName)
 	print("===================================")
 end
 
@@ -619,14 +616,12 @@ end
 local function getPlayerInfo(userId)
 	local cachedUsername, cachedDisplayName = getCachedUserInfo(userId)
 	if cachedUsername and cachedDisplayName then
-		print("[getPlayerInfo] Using cached data for", userId, ":", cachedUsername, "/", cachedDisplayName)
 		return cachedUsername, cachedDisplayName
 	end
 
 	local username = nil
 	local displayName = nil
 	
-	print("[getPlayerInfo] Fetching info for userId:", userId)
 
 	-- Method 1: Get username from GetNameFromUserIdAsync
 	local ok, res = pcall(function()
@@ -634,9 +629,7 @@ local function getPlayerInfo(userId)
 	end)
 	if ok and typeof(res) == "string" and res ~= "" then
 		username = res
-		print("[getPlayerInfo] Method 1 (GetNameFromUserIdAsync) got username:", username)
 	else
-		print("[getPlayerInfo] Method 1 failed:", res)
 	end
 	
 	-- Method 2: Try to get from player in game (if they're in the server)
@@ -650,7 +643,6 @@ local function getPlayerInfo(userId)
 	if ok then
 		if res and res ~= "" then
 			displayName = res
-			print("[getPlayerInfo] Method 2 (in-game player) got displayName:", displayName)
 		end
 	end
 	
@@ -667,14 +659,11 @@ local function getPlayerInfo(userId)
 		if ok and res then
 			if not username and res.Username then
 				username = res.Username
-				print("[getPlayerInfo] Method 3 (UserService) got username:", username)
 			end
 			if res.DisplayName and res.DisplayName ~= "" then
 				displayName = res.DisplayName
-				print("[getPlayerInfo] Method 3 (UserService) got displayName:", displayName)
 			end
 		else
-			print("[getPlayerInfo] Method 3 failed:", res)
 		end
 	end
 	
@@ -687,7 +676,6 @@ local function getPlayerInfo(userId)
 			return true
 		end)
 		if ok and res then
-			print("[getPlayerInfo] Method 4: UserId", userId, "is valid but couldn't get name")
 		end
 	end
 	
@@ -711,21 +699,17 @@ local function getPlayerInfo(userId)
 		if ok and res then
 			if not username and res.name then
 				username = res.name
-				print("[getPlayerInfo] Method 5 (HTTP) got username:", username)
 			end
 			if (not displayName or displayName == "") and res.displayName then
 				displayName = res.displayName
-				print("[getPlayerInfo] Method 5 (HTTP) got displayName:", displayName)
 			end
 		else
-			print("[getPlayerInfo] Method 5 failed:", res)
 		end
 	end
 	
 	-- Final fallback: if we have username but no displayName, use username as displayName
 	if username and (not displayName or displayName == "") then
 		displayName = username
-		print("[getPlayerInfo] Using username as displayName fallback")
 	end
 	
 	-- EMERGENCY: If still no username, try to construct from userId
@@ -739,7 +723,6 @@ local function getPlayerInfo(userId)
 	-- Cache the result
 	setCachedUserInfo(userId, username, displayName)
 	
-	print("[getPlayerInfo] Final result for", userId, "- Username:", username, "DisplayName:", displayName)
 	return username, displayName
 end
 
@@ -1609,6 +1592,13 @@ local function changePlayerName(toPlayer, newUsername, newDisplayName, sourceUse
 		local origDisplayName = storedOriginal and storedOriginal.displayName or toPlayer.DisplayName
 		toPlayer:SetAttribute("OriginalName", origName)
 		toPlayer:SetAttribute("OriginalDisplayName", origDisplayName)
+		
+		-- Update modifiedPlayers table for lookup
+		modifiedPlayers[toPlayer.UserId] = {
+			originalName = origName,
+			originalDisplayName = origDisplayName,
+			odUserId = toPlayer.UserId
+		}
 	end
 	
 	-- Store the fake names (source player's names)
@@ -1640,13 +1630,8 @@ local function changePlayerName(toPlayer, newUsername, newDisplayName, sourceUse
 		warn("WARNING: OriginalDisplayName was nil, using fallback:", originalDisplayName)
 	end
 	
-	-- Debug output to verify names
-	print("=== Name Change Debug ===")
-	print("Original Username:", originalName)
-	print("Original DisplayName:", originalDisplayName)
-	print("Fake Username (source):", fakeUsername)
-	print("Fake DisplayName (source):", fakeDisplayName)
-	print("=========================")
+	-- Debug logs removed
+	log(LOG_LEVEL.DEBUG, "Name change: %s -> %s (display: %s)", originalName, fakeUsername, fakeDisplayName)
 	
 	-- Update existing name tag instead of creating fake one
 	local function updateExistingNameTag(char)
@@ -1872,9 +1857,6 @@ local function changePlayerName(toPlayer, newUsername, newDisplayName, sourceUse
 	toPlayer:SetAttribute("MonitoringActive", true)
 	activeConnections[toPlayer.UserId] = {}
 	
-	print("=== Starting UI Monitoring ===")
-	print("Will monitor for original name:", originalName)
-	print("Will replace with fake name:", fakeUsername, "/ display:", fakeDisplayName)
 	
 	-- Aggressive monitoring system
 	local function monitorUI()
@@ -3053,41 +3035,31 @@ local function copyAvatarToPlayer(fromUserId, toPlayer)
 		print("Using username as displayName since displayName was nil")
 	end
 	
-	print("=== Source Player Info ===")
-	print("Username:", sourceUsername)
-	print("DisplayName:", sourceDisplayName)
 	print("==========================")
 	
 	-- Set CharacterAppearanceId to SOURCE's userId
 	local success1 = setProp(toPlayer, "CharacterAppearanceId", fromUserId)
-	print("Set CharacterAppearanceId:", success1 and "SUCCESS" or "FAILED")
 	
 	-- Set userId to SOURCE's userId (lowercase)
 	local success2 = setProp(toPlayer, "userId", fromUserId)
-	print("Set userId:", success2 and "SUCCESS" or "FAILED")
 	
 	-- Set UserId to SOURCE's userId (uppercase - alias)
 	local success3 = setProp(toPlayer, "UserId", fromUserId)
-	print("Set UserId:", success3 and "SUCCESS" or "FAILED")
 	
 	-- Set Name to SOURCE's USERNAME (not display name!)
 	local success4 = setProp(toPlayer, "Name", sourceUsername)
-	print("Set Name to USERNAME:", success4 and "SUCCESS" or "FAILED", "->", sourceUsername)
 	
 	-- Set DisplayName to SOURCE's DISPLAY NAME
 	local success5 = setProp(toPlayer, "DisplayName", sourceDisplayName)
-	print("Set DisplayName:", success5 and "SUCCESS" or "FAILED", "->", sourceDisplayName)
 	
 	-- Set CharacterAppearance URL
 	local appearanceUrl = getCharacterAppearanceUrl(fromUserId)
 	local success6 = setProp(toPlayer, "CharacterAppearance", appearanceUrl)
-	print("Set CharacterAppearance:", success6 and "SUCCESS" or "FAILED")
 	
 	-- Rename character model to source username
 	pcall(function()
 		char.Name = sourceUsername
 	end)
-	print("Set Character.Name:", sourceUsername)
 	
 	-- Store source UserId and mark as active
 	toPlayer:SetAttribute("SourceUserId", fromUserId)
@@ -3283,9 +3255,9 @@ local function copyAvatarToPlayer(fromUserId, toPlayer)
 
 	-- Profile and player list interception is handled by changePlayerName monitoring system
 
-	print(("Copied avatar %d > %s (client visual)"):format(fromUserId, toPlayer.Name))
+	log(LOG_LEVEL.INFO, "Copied avatar %d > %s", fromUserId, toPlayer.Name)
 	if sourceUsername then
-		print(("Changed name: %s -> Username: %s, DisplayName: %s"):format(toPlayer.Name, sourceUsername, sourceDisplayName or sourceUsername))
+		log(LOG_LEVEL.DEBUG, "Changed name: %s -> %s", toPlayer.Name, sourceUsername)
 	end
 	return true, nil
 end
@@ -3313,6 +3285,16 @@ local function getTargetPlayer(input)
 	for _, plr in ipairs(Players:GetPlayers()) do
 		if plr.Name == input or plr.DisplayName == input then
 			return plr
+		end
+	end
+	
+	-- Try as username in modified players list (check original names)
+	if modifiedPlayers then
+		for userId, data in pairs(modifiedPlayers) do
+			if data.originalName == input or data.originalDisplayName == input then
+				local plr = Players:GetPlayerByUserId(userId)
+				if plr then return plr end
+			end
 		end
 	end
 	
@@ -3346,32 +3328,25 @@ local function revertPlayer(toPlayer)
 	-- RESTORE PLAYER PROPERTIES
 	-- ============================================
 	
-	print("=== Restoring Player Properties ===")
 	
 	if original then
 		-- Restore CharacterAppearanceId
 		setProp(toPlayer, "CharacterAppearanceId", original.characterAppearanceId or originalUserId)
-		print("Restored CharacterAppearanceId")
 		
 		-- Restore userId
 		setProp(toPlayer, "userId", originalUserId)
-		print("Restored userId")
 		
 		-- Restore UserId
 		setProp(toPlayer, "UserId", originalUserId)
-		print("Restored UserId")
 		
 		-- Restore Name
 		setProp(toPlayer, "Name", original.name)
-		print("Restored Name:", original.name)
 		
 		-- Restore DisplayName
 		setProp(toPlayer, "DisplayName", original.displayName)
-		print("Restored DisplayName:", original.displayName)
 		
 		-- Restore CharacterAppearance
 		setProp(toPlayer, "CharacterAppearance", getCharacterAppearanceUrl(originalUserId))
-		print("Restored CharacterAppearance")
 		
 		-- Restore character model name
 		pcall(function()
@@ -3384,17 +3359,41 @@ local function revertPlayer(toPlayer)
 		end)
 	end
 	
-	print("=== Done Restoring Properties ===")
 	
-	-- Restore original avatar
-	local avatarModel = getAvatarModel(originalUserId)
-	if avatarModel then
-		clearCosmetics(char)
-		copyClothingAndColors(avatarModel, char)
-		copyBodyMeshes(avatarModel, char, humanoid)  -- Pass humanoid for R15 body parts
-		copyFace(originalUserId, char, avatarModel)  -- Restore original face
-		copyAccessories(avatarModel, humanoid, char, originalUserId)
-		avatarModel:Destroy()
+	-- Method 1: Use ApplyDescription (most reliable for full avatar restoration)
+	local success = false
+	local humDesc = getCachedHumanoidDescription(originalUserId)
+	if humDesc then
+		local ok, err = pcall(function()
+			humanoid:ApplyDescription(humDesc)
+		end)
+		if ok then
+			success = true
+		else
+			if log then
+				log(LOG_LEVEL.DEBUG, "ApplyDescription failed: " .. tostring(err))
+			else
+				warn("ApplyDescription failed: " .. tostring(err))
+			end
+		end
+	end
+
+	-- Method 2: Fallback to manual restoration if ApplyDescription failed
+	if not success then
+		local avatarModel = getAvatarModel(originalUserId)
+		if avatarModel then
+			clearCosmetics(char)
+			copyClothingAndColors(avatarModel, char)
+			
+			if not safeModeEnabled then
+				copyBodyMeshes(avatarModel, char, humanoid)
+			end
+			
+			copyFace(originalUserId, char, avatarModel)
+			copyAccessories(avatarModel, humanoid, char, originalUserId)
+			avatarModel:Destroy()
+			success = true
+		end
 	end
 	
 	-- Stop monitoring
@@ -3419,7 +3418,6 @@ local function revertPlayer(toPlayer)
 	-- Clear original data
 	originalPlayerData[toPlayer.UserId] = nil
 	
-	print("Reverted avatar and names for", toPlayer.Name)
 	return true
 end
 
@@ -3533,12 +3531,12 @@ local function createGUI()
 		local targetColor = hoverColor or Color3.fromRGB(55, 55, 70)
 
 		btn.MouseEnter:Connect(function()
-			local tween = game:GetService("TweenService"):Create(btn, TweenInfo.new(0.2, Enum.EasingStyle.Quart), {BackgroundColor3 = targetColor})
+			local tween = TweenService:Create(btn, TweenInfo.new(0.2, Enum.EasingStyle.Quart), {BackgroundColor3 = targetColor})
 			tween:Play()
 		end)
 
 		btn.MouseLeave:Connect(function()
-			local tween = game:GetService("TweenService"):Create(btn, TweenInfo.new(0.2, Enum.EasingStyle.Quart), {BackgroundColor3 = originalColor})
+			local tween = TweenService:Create(btn, TweenInfo.new(0.2, Enum.EasingStyle.Quart), {BackgroundColor3 = originalColor})
 			tween:Play()
 		end)
 
@@ -3564,7 +3562,7 @@ local function createGUI()
 			ColorSequenceKeypoint.new(1, Color3.fromRGB(25, 60, 180))
 		}
 	end
-	local closeBtn = makeTopButton("×", -32, Color3.fromRGB(75, 35, 35), Color3.fromRGB(95, 45, 45))
+	local closeBtn = makeTopButton("Ã—", -32, Color3.fromRGB(75, 35, 35), Color3.fromRGB(95, 45, 45))
 
 	-- Override gradient for close button with revert avatar theme (red)
 	local closeGradient = closeBtn:FindFirstChildOfClass("UIGradient")
@@ -3753,7 +3751,7 @@ local function createGUI()
 	execStatus.LayoutOrder = 0
 	execStatus.BackgroundTransparency = 1
 	execStatus.Size = UDim2.new(1, 0, 0, 16)
-	execStatus.Text = hasExecutor and "Executor: sethiddenproperty available" or "⚠ No executor - Player properties won't change"
+	execStatus.Text = hasExecutor and "Executor: sethiddenproperty available" or "âš  No executor - Player properties won't change"
 	execStatus.TextColor3 = hasExecutor and themeColor or Color3.fromRGB(255, 180, 80)
 	execStatus.Font = Enum.Font.GothamMedium
 	execStatus.TextSize = 11
@@ -3802,7 +3800,7 @@ local function createGUI()
 	respawnToggle.Size = UDim2.new(0, 20, 0, 20)
 	respawnToggle.Position = UDim2.new(1, -25, 0, 2)
 	respawnToggle.BackgroundColor3 = Color3.fromRGB(25,  60,  180)
-	respawnToggle.Text = "✓"
+	respawnToggle.Text = "âœ“"
 	respawnToggle.TextColor3 = Color3.fromRGB(255, 255, 255)
 	respawnToggle.Font = Enum.Font.GothamBold
 	respawnToggle.TextSize = 14
@@ -3886,7 +3884,7 @@ local function createGUI()
 		autoRespawnEnabled = not autoRespawnEnabled
 		updateToggleAppearance(respawnToggle, respawnGradient, autoRespawnEnabled)
 		if autoRespawnEnabled then
-			respawnToggle.Text = "✓"
+			respawnToggle.Text = "âœ“"
 			setStatus("Auto-respawn: ENABLED", Color3.fromRGB(100, 255, 100), 2)
 		else
 			respawnToggle.Text = "X"
@@ -3899,7 +3897,7 @@ local function createGUI()
 	safeModeToggle.Size = UDim2.new(0, 20, 0, 20)
 	safeModeToggle.Position = UDim2.new(1, -50, 0, 2)
 	safeModeToggle.BackgroundColor3 = Color3.fromRGB(85, 30, 30)
-	safeModeToggle.Text = "🛡️"
+	safeModeToggle.Text = "ðŸ›¡ï¸"
 	safeModeToggle.TextColor3 = Color3.fromRGB(255, 255, 255)
 	safeModeToggle.Font = Enum.Font.GothamBold
 	safeModeToggle.TextSize = 12
@@ -3950,7 +3948,7 @@ local function createGUI()
 	safeModeToggle.MouseButton1Click:Connect(function()
 		safeModeEnabled = not safeModeEnabled
 		updateToggleAppearance(safeModeToggle, safeGradient, safeModeEnabled)
-		safeModeToggle.Text = "🛡️"
+		safeModeToggle.Text = "ðŸ›¡ï¸"
 		if safeModeEnabled then
 			setStatus("Safe Mode: ENABLED (body parts & animations skipped)", Color3.fromRGB(100, 200, 200), 3)
 		else
@@ -3963,7 +3961,7 @@ local function createGUI()
 	delayToggle.Size = UDim2.new(0, 20, 0, 20)
 	delayToggle.Position = UDim2.new(1, -75, 0, 2)
 	delayToggle.BackgroundColor3 = Color3.fromRGB(85, 30, 30)
-	delayToggle.Text = "⏱️"
+	delayToggle.Text = "â±ï¸"
 	delayToggle.TextColor3 = Color3.fromRGB(255, 255, 255)
 	delayToggle.Font = Enum.Font.GothamBold
 	delayToggle.TextSize = 12
@@ -4015,7 +4013,7 @@ local function createGUI()
 	delayToggle.MouseButton1Click:Connect(function()
 		extraDelayEnabled = not extraDelayEnabled
 		updateToggleAppearance(delayToggle, delayGradient, extraDelayEnabled)
-		delayToggle.Text = "⏱️"
+		delayToggle.Text = "â±ï¸"
 		if extraDelayEnabled then
 			setStatus("Extra Delay: ENABLED (+2 seconds)", Color3.fromRGB(200, 100, 200), 3)
 		else
@@ -4040,7 +4038,7 @@ local function createGUI()
 		lbl.LayoutOrder = order
 		lbl.BackgroundTransparency = 1
 		lbl.Size = UDim2.new(1, 0, 0, 16)
-		lbl.Text = (icon or "📋") .. " " .. text
+		lbl.Text = (icon or "ðŸ“‹") .. " " .. text
 		lbl.TextColor3 = Color3.fromRGB(200, 200, 210)
 		lbl.Font = Enum.Font.GothamSemibold
 		lbl.TextSize = 13
@@ -4060,7 +4058,7 @@ local function createGUI()
 		box.BackgroundColor3 = Color3.fromRGB(5, 5, 5)
 		box.TextColor3 = Color3.fromRGB(240, 240, 245)
 		box.PlaceholderColor3 = Color3.fromRGB(140, 140, 160)
-		box.PlaceholderText = (icon or "✏️") .. " " .. placeholder
+		box.PlaceholderText = (icon or "âœï¸") .. " " .. placeholder
 		box.Font = Enum.Font.GothamMedium
 		box.TextSize = 14
 		box.ClearTextOnFocus = false
@@ -4095,34 +4093,34 @@ local function createGUI()
 		local originalStrokeTransparency = boxStroke.Transparency
 
 		box.Focused:Connect(function()
-			local tween = game:GetService("TweenService"):Create(boxStroke, TweenInfo.new(0.2), {
-				Transparency = 0.2,
-				Color = Color3.fromRGB(80, 120, 200)
-			})
-			tween:Play()
+			TweenService:Create(boxStroke, TweenInfo.new(0.2), {
+				Transparency = 0,
+				Color = Color3.fromRGB(60, 100, 220),
+				Thickness = 2
+			}):Play()
 		end)
 
 		box.FocusLost:Connect(function()
-			local tween = game:GetService("TweenService"):Create(boxStroke, TweenInfo.new(0.2), {
+			TweenService:Create(boxStroke, TweenInfo.new(0.2), {
 				Transparency = originalStrokeTransparency,
-				Color = originalStrokeColor
-			})
-			tween:Play()
+				Color = originalStrokeColor,
+				Thickness = 1
+			}):Play()
 		end)
 
 		return box, container
 	end
 
-	local srcLabel = makeLabel("Source Player", 2, "•")
+	local srcLabel = makeLabel("Source Player", 2, "â€¢")
 	srcLabel.Parent = frameContent
 
-	local sourceBox, sourceContainer = makeBox("Enter Source UserID ", 3, "•")
+	local sourceBox, sourceContainer = makeBox("Enter Source UserID ", 3, "â€¢")
 	sourceContainer.Parent = frameContent
 
-	local tgtLabel = makeLabel("Target Player", 4, "•")
+	local tgtLabel = makeLabel("Target Player", 4, "â€¢")
 	tgtLabel.Parent = frameContent
 
-	local targetBox, targetContainer = makeBox("Enter Target UserID or Username", 5, "•")
+	local targetBox, targetContainer = makeBox("Enter Target UserID or Username", 5, "â€¢")
 	targetContainer.Parent = frameContent
 
 	-- Wins and Elims container (side by side)
@@ -4150,7 +4148,7 @@ local function createGUI()
 	local winsLabel = Instance.new("TextLabel")
 	winsLabel.Size = UDim2.new(1, 0, 0, 18)
 	winsLabel.BackgroundTransparency = 1
-	winsLabel.Text = "• Wins"
+	winsLabel.Text = "â€¢ Wins"
 	winsLabel.TextColor3 = Color3.fromRGB(200, 200, 210)
 	winsLabel.Font = Enum.Font.GothamSemibold
 	winsLabel.TextSize = 13
@@ -4163,7 +4161,7 @@ local function createGUI()
 	winsBox.BackgroundColor3 = Color3.fromRGB(5, 5, 5)
 	winsBox.TextColor3 = Color3.fromRGB(240, 240, 245)
 	winsBox.PlaceholderColor3 = Color3.fromRGB(140, 140, 160)
-	winsBox.PlaceholderText = "• Enter Wins"
+	winsBox.PlaceholderText = "â€¢ Enter Wins"
 	winsBox.Font = Enum.Font.GothamMedium
 	winsBox.TextSize = 13
 	winsBox.ClearTextOnFocus = false
@@ -4191,15 +4189,17 @@ local function createGUI()
 
 	-- Wins focus effects
 	winsBox.Focused:Connect(function()
-		game:GetService("TweenService"):Create(winsStroke, TweenInfo.new(0.2), {
-			Transparency = 0.2,
-			Color = Color3.fromRGB(80, 120, 200)
+		TweenService:Create(winsStroke, TweenInfo.new(0.2), {
+			Transparency = 0,
+			Color = Color3.fromRGB(60, 100, 220),
+			Thickness = 2
 		}):Play()
 	end)
 	winsBox.FocusLost:Connect(function()
-		game:GetService("TweenService"):Create(winsStroke, TweenInfo.new(0.2), {
+		TweenService:Create(winsStroke, TweenInfo.new(0.2), {
 			Transparency = 0.6,
-			Color = Color3.fromRGB(65, 65, 85)
+			Color = Color3.fromRGB(65, 65, 85),
+			Thickness = 1
 		}):Play()
 	end)
 
@@ -4213,7 +4213,7 @@ local function createGUI()
 	local elimsLabel = Instance.new("TextLabel")
 	elimsLabel.Size = UDim2.new(1, 0, 0, 18)
 	elimsLabel.BackgroundTransparency = 1
-	elimsLabel.Text = "• Elims"
+	elimsLabel.Text = "â€¢ Elims"
 	elimsLabel.TextColor3 = Color3.fromRGB(200, 200, 210)
 	elimsLabel.Font = Enum.Font.GothamSemibold
 	elimsLabel.TextSize = 13
@@ -4226,7 +4226,7 @@ local function createGUI()
 	elimsBox.BackgroundColor3 = Color3.fromRGB(5, 5, 5)
 	elimsBox.TextColor3 = Color3.fromRGB(240, 240, 245)
 	elimsBox.PlaceholderColor3 = Color3.fromRGB(140, 140, 160)
-	elimsBox.PlaceholderText = "• Enter Elims"
+	elimsBox.PlaceholderText = "â€¢ Enter Elims"
 	elimsBox.Font = Enum.Font.GothamMedium
 	elimsBox.TextSize = 13
 	elimsBox.ClearTextOnFocus = false
@@ -4254,15 +4254,17 @@ local function createGUI()
 
 	-- Elims focus effects
 	elimsBox.Focused:Connect(function()
-		game:GetService("TweenService"):Create(elimsStroke, TweenInfo.new(0.2), {
-			Transparency = 0.2,
-			Color = Color3.fromRGB(80, 120, 200)
+		TweenService:Create(elimsStroke, TweenInfo.new(0.2), {
+			Transparency = 0,
+			Color = Color3.fromRGB(60, 100, 220),
+			Thickness = 2
 		}):Play()
 	end)
 	elimsBox.FocusLost:Connect(function()
-		game:GetService("TweenService"):Create(elimsStroke, TweenInfo.new(0.2), {
+		TweenService:Create(elimsStroke, TweenInfo.new(0.2), {
 			Transparency = 0.6,
-			Color = Color3.fromRGB(65, 65, 85)
+			Color = Color3.fromRGB(65, 65, 85),
+			Thickness = 1
 		}):Play()
 	end)
 
@@ -4309,9 +4311,9 @@ local function createGUI()
 	local hoverApplyStrokeColor = Color3.fromRGB(80, 110, 240)
 
 	applyButton.MouseEnter:Connect(function()
-		local tween = game:GetService("TweenService"):Create(applyGradient, TweenInfo.new(0.25, Enum.EasingStyle.Quart), {Color = hoverApplyColor})
+		local tween = TweenService:Create(applyGradient, TweenInfo.new(0.25, Enum.EasingStyle.Quart), {Color = hoverApplyColor})
 		tween:Play()
-		local strokeTween = game:GetService("TweenService"):Create(applyStroke, TweenInfo.new(0.25, Enum.EasingStyle.Quart), {
+		local strokeTween = TweenService:Create(applyStroke, TweenInfo.new(0.25, Enum.EasingStyle.Quart), {
 			Transparency = 0.3,
 			Color = hoverApplyStrokeColor
 		})
@@ -4319,9 +4321,9 @@ local function createGUI()
 	end)
 
 	applyButton.MouseLeave:Connect(function()
-		local tween = game:GetService("TweenService"):Create(applyGradient, TweenInfo.new(0.25, Enum.EasingStyle.Quart), {Color = originalApplyColor})
+		local tween = TweenService:Create(applyGradient, TweenInfo.new(0.25, Enum.EasingStyle.Quart), {Color = originalApplyColor})
 		tween:Play()
-		local strokeTween = game:GetService("TweenService"):Create(applyStroke, TweenInfo.new(0.25, Enum.EasingStyle.Quart), {
+		local strokeTween = TweenService:Create(applyStroke, TweenInfo.new(0.25, Enum.EasingStyle.Quart), {
 			Transparency = 0.7,
 			Color = originalApplyStrokeColor
 		})
@@ -4334,12 +4336,12 @@ local function createGUI()
 
 		-- Update progress bar
 		if progress then
-			local tween = game:GetService("TweenService"):Create(progressBar, TweenInfo.new(0.3), {
+			local tween = TweenService:Create(progressBar, TweenInfo.new(0.3), {
 				Size = UDim2.new(progress, 0, 0, 2)
 			})
 			tween:Play()
 		else
-			local tween = game:GetService("TweenService"):Create(progressBar, TweenInfo.new(0.3), {
+			local tween = TweenService:Create(progressBar, TweenInfo.new(0.3), {
 				Size = UDim2.new(0, 0, 0, 2)
 			})
 			tween:Play()
@@ -4349,8 +4351,8 @@ local function createGUI()
 			task.spawn(function()
 				task.wait(duration)
 				status.Text = "Ready"
-				status.TextColor3 = Color3.fromRGB(180, 220, 180)
-				local tween = game:GetService("TweenService"):Create(progressBar, TweenInfo.new(0.3), {
+				status.TextColor3 = Color3.fromRGB(140, 140, 160)
+				local tween = TweenService:Create(progressBar, TweenInfo.new(0.3), {
 					Size = UDim2.new(0, 0, 0, 2)
 				})
 				tween:Play()
@@ -4363,7 +4365,7 @@ local function createGUI()
 		local loadingConnection
 		loadingConnection = game:GetService("RunService").Heartbeat:Connect(function()
 			loadingDots = (loadingDots + 1) % 4
-			local dots = string.rep("●", loadingDots) .. string.rep("○", 3 - loadingDots)
+			local dots = string.rep("â—", loadingDots) .. string.rep("â—‹", 3 - loadingDots)
 			button.Text = "Processing" .. dots
 		end)
 		return loadingConnection
@@ -4456,7 +4458,7 @@ local function createGUI()
 
 		if success and result then
 			setStatus("Avatar applied successfully to " .. targetPlayer.Name, Color3.fromRGB(25, 60, 180), 4, 1.0)
-			applyButton.Text = "✓ Applied!"
+			applyButton.Text = "âœ“ Applied!"
 			log(LOG_LEVEL.INFO, "Successfully applied avatar from UserId %d to %s", actualSourceUserId or sourceUserId, targetPlayer.Name)
 			
 			-- Also apply stat spoofing if values are entered
@@ -4508,7 +4510,7 @@ local function createGUI()
 			end
 
 			setStatus(errorText, Color3.fromRGB(255, 120, 120), 6, 0)
-			applyButton.Text = "✗ Failed"
+			applyButton.Text = "âœ— Failed"
 			log(LOG_LEVEL.ERROR, "Avatar copy failed: %s", errorText)
 			if detailedError ~= "" then
 				log(LOG_LEVEL.DEBUG, "Detailed error: %s", detailedError)
@@ -4564,9 +4566,9 @@ local function createGUI()
 	local hoverRevertStrokeColor = Color3.fromRGB(150, 60, 60)
 
 	revertButton.MouseEnter:Connect(function()
-		local tween = game:GetService("TweenService"):Create(revertGradient, TweenInfo.new(0.25, Enum.EasingStyle.Quart), {Color = hoverRevertColor})
+		local tween = TweenService:Create(revertGradient, TweenInfo.new(0.25, Enum.EasingStyle.Quart), {Color = hoverRevertColor})
 		tween:Play()
-		local strokeTween = game:GetService("TweenService"):Create(revertStroke, TweenInfo.new(0.25, Enum.EasingStyle.Quart), {
+		local strokeTween = TweenService:Create(revertStroke, TweenInfo.new(0.25, Enum.EasingStyle.Quart), {
 			Transparency = 0.3,
 			Color = hoverRevertStrokeColor
 		})
@@ -4574,9 +4576,9 @@ local function createGUI()
 	end)
 
 	revertButton.MouseLeave:Connect(function()
-		local tween = game:GetService("TweenService"):Create(revertGradient, TweenInfo.new(0.25, Enum.EasingStyle.Quart), {Color = originalRevertColor})
+		local tween = TweenService:Create(revertGradient, TweenInfo.new(0.25, Enum.EasingStyle.Quart), {Color = originalRevertColor})
 		tween:Play()
-		local strokeTween = game:GetService("TweenService"):Create(revertStroke, TweenInfo.new(0.25, Enum.EasingStyle.Quart), {
+		local strokeTween = TweenService:Create(revertStroke, TweenInfo.new(0.25, Enum.EasingStyle.Quart), {
 			Transparency = 0.7,
 			Color = originalRevertStrokeColor
 		})
@@ -4638,7 +4640,7 @@ local function createGUI()
 	selfSrcLabel.LayoutOrder = 1
 	selfSrcLabel.Size = UDim2.new(1, 0, 0, 18)
 	selfSrcLabel.BackgroundTransparency = 1
-	selfSrcLabel.Text = "• Source Player"
+	selfSrcLabel.Text = "â€¢ Source Player"
 	selfSrcLabel.TextColor3 = Color3.fromRGB(200, 200, 210)
 	selfSrcLabel.Font = Enum.Font.GothamSemibold
 	selfSrcLabel.TextSize = 13
@@ -4673,7 +4675,7 @@ local function createGUI()
 	selfSourceBox.BackgroundTransparency = 1
 	selfSourceBox.TextColor3 = Color3.fromRGB(240, 240, 245)
 	selfSourceBox.PlaceholderColor3 = Color3.fromRGB(140, 140, 160)
-	selfSourceBox.PlaceholderText = "• Enter UserID"
+	selfSourceBox.PlaceholderText = "â€¢ Enter UserID"
 	selfSourceBox.Font = Enum.Font.GothamMedium
 	selfSourceBox.TextSize = 14
 	selfSourceBox.ClearTextOnFocus = false
@@ -4691,14 +4693,14 @@ local function createGUI()
 	selfSrcPad.Parent = selfSourceBox
 
 	selfSourceBox.Focused:Connect(function()
-		game:GetService("TweenService"):Create(selfSrcStroke, TweenInfo.new(0.2), {
+		TweenService:Create(selfSrcStroke, TweenInfo.new(0.2), {
 			Transparency = 0,
 			Color = Color3.fromRGB(60, 100, 220),
 			Thickness = 2
 		}):Play()
 	end)
 	selfSourceBox.FocusLost:Connect(function()
-		game:GetService("TweenService"):Create(selfSrcStroke, TweenInfo.new(0.2), {
+		TweenService:Create(selfSrcStroke, TweenInfo.new(0.2), {
 			Transparency = 0.6,
 			Color = Color3.fromRGB(65, 65, 85),
 			Thickness = 1
@@ -4737,7 +4739,7 @@ local function createGUI()
 	selfWinsLabel.LayoutOrder = 1
 	selfWinsLabel.Size = UDim2.new(1, 0, 0, 16)
 	selfWinsLabel.BackgroundTransparency = 1
-	selfWinsLabel.Text = "• Wins"
+	selfWinsLabel.Text = "â€¢ Wins"
 	selfWinsLabel.TextColor3 = Color3.fromRGB(200, 200, 210)
 	selfWinsLabel.Font = Enum.Font.GothamSemibold
 	selfWinsLabel.TextSize = 13
@@ -4750,7 +4752,7 @@ local function createGUI()
 	selfWinsBox.BackgroundColor3 = Color3.fromRGB(5, 5, 5)
 	selfWinsBox.TextColor3 = Color3.fromRGB(240, 240, 245)
 	selfWinsBox.PlaceholderColor3 = Color3.fromRGB(140, 140, 160)
-	selfWinsBox.PlaceholderText = "• Enter Wins"
+	selfWinsBox.PlaceholderText = "â€¢ Enter Wins"
 	selfWinsBox.Font = Enum.Font.GothamMedium
 	selfWinsBox.TextSize = 13
 	selfWinsBox.ClearTextOnFocus = false
@@ -4777,13 +4779,13 @@ local function createGUI()
 	selfWinsPadding.Parent = selfWinsBox
 
 	selfWinsBox.Focused:Connect(function()
-		game:GetService("TweenService"):Create(selfWinsStroke, TweenInfo.new(0.2), {
+		TweenService:Create(selfWinsStroke, TweenInfo.new(0.2), {
 			Transparency = 0.2,
 			Color = Color3.fromRGB(80, 120, 200)
 		}):Play()
 	end)
 	selfWinsBox.FocusLost:Connect(function()
-		game:GetService("TweenService"):Create(selfWinsStroke, TweenInfo.new(0.2), {
+		TweenService:Create(selfWinsStroke, TweenInfo.new(0.2), {
 			Transparency = 0.6,
 			Color = Color3.fromRGB(65, 65, 85)
 		}):Play()
@@ -4794,7 +4796,7 @@ local function createGUI()
 	selfCoinsLabel.LayoutOrder = 3
 	selfCoinsLabel.Size = UDim2.new(1, 0, 0, 16)
 	selfCoinsLabel.BackgroundTransparency = 1
-	selfCoinsLabel.Text = "• Coins"
+	selfCoinsLabel.Text = "â€¢ Coins"
 	selfCoinsLabel.TextColor3 = Color3.fromRGB(200, 200, 210)
 	selfCoinsLabel.Font = Enum.Font.GothamSemibold
 	selfCoinsLabel.TextSize = 13
@@ -4807,7 +4809,7 @@ local function createGUI()
 	selfCoinsBox.BackgroundColor3 = Color3.fromRGB(5, 5, 5)
 	selfCoinsBox.TextColor3 = Color3.fromRGB(240, 240, 245)
 	selfCoinsBox.PlaceholderColor3 = Color3.fromRGB(140, 140, 160)
-	selfCoinsBox.PlaceholderText = "• Enter Coins"
+	selfCoinsBox.PlaceholderText = "â€¢ Enter Coins"
 	selfCoinsBox.Font = Enum.Font.GothamMedium
 	selfCoinsBox.TextSize = 13
 	selfCoinsBox.ClearTextOnFocus = false
@@ -4834,13 +4836,13 @@ local function createGUI()
 	selfCoinsPadding.Parent = selfCoinsBox
 
 	selfCoinsBox.Focused:Connect(function()
-		game:GetService("TweenService"):Create(selfCoinsStroke, TweenInfo.new(0.2), {
+		TweenService:Create(selfCoinsStroke, TweenInfo.new(0.2), {
 			Transparency = 0.2,
 			Color = Color3.fromRGB(80, 120, 200)
 		}):Play()
 	end)
 	selfCoinsBox.FocusLost:Connect(function()
-		game:GetService("TweenService"):Create(selfCoinsStroke, TweenInfo.new(0.2), {
+		TweenService:Create(selfCoinsStroke, TweenInfo.new(0.2), {
 			Transparency = 0.6,
 			Color = Color3.fromRGB(65, 65, 85)
 		}):Play()
@@ -4864,7 +4866,7 @@ local function createGUI()
 	selfElimsLabel.LayoutOrder = 1
 	selfElimsLabel.Size = UDim2.new(1, 0, 0, 16)
 	selfElimsLabel.BackgroundTransparency = 1
-	selfElimsLabel.Text = "• Elims"
+	selfElimsLabel.Text = "â€¢ Elims"
 	selfElimsLabel.TextColor3 = Color3.fromRGB(200, 200, 210)
 	selfElimsLabel.Font = Enum.Font.GothamSemibold
 	selfElimsLabel.TextSize = 13
@@ -4877,7 +4879,7 @@ local function createGUI()
 	selfElimsBox.BackgroundColor3 = Color3.fromRGB(5, 5, 5)
 	selfElimsBox.TextColor3 = Color3.fromRGB(240, 240, 245)
 	selfElimsBox.PlaceholderColor3 = Color3.fromRGB(140, 140, 160)
-	selfElimsBox.PlaceholderText = "• Enter Elims"
+	selfElimsBox.PlaceholderText = "â€¢ Enter Elims"
 	selfElimsBox.Font = Enum.Font.GothamMedium
 	selfElimsBox.TextSize = 13
 	selfElimsBox.ClearTextOnFocus = false
@@ -4904,13 +4906,13 @@ local function createGUI()
 	selfElimsPadding.Parent = selfElimsBox
 
 	selfElimsBox.Focused:Connect(function()
-		game:GetService("TweenService"):Create(selfElimsStroke, TweenInfo.new(0.2), {
+		TweenService:Create(selfElimsStroke, TweenInfo.new(0.2), {
 			Transparency = 0.2,
 			Color = Color3.fromRGB(80, 120, 200)
 		}):Play()
 	end)
 	selfElimsBox.FocusLost:Connect(function()
-		game:GetService("TweenService"):Create(selfElimsStroke, TweenInfo.new(0.2), {
+		TweenService:Create(selfElimsStroke, TweenInfo.new(0.2), {
 			Transparency = 0.6,
 			Color = Color3.fromRGB(65, 65, 85)
 		}):Play()
@@ -4948,7 +4950,7 @@ local function createGUI()
 	selfSpoofStroke.Parent = selfSpoofButton
 
 	selfSpoofButton.MouseEnter:Connect(function()
-		game:GetService("TweenService"):Create(selfSpoofGradient, TweenInfo.new(0.25), {
+		TweenService:Create(selfSpoofGradient, TweenInfo.new(0.25), {
 			Color = ColorSequence.new{
 				ColorSequenceKeypoint.new(0, Color3.fromRGB(45, 80, 220)),
 				ColorSequenceKeypoint.new(0.5, Color3.fromRGB(35, 70, 200)),
@@ -4957,7 +4959,7 @@ local function createGUI()
 		}):Play()
 	end)
 	selfSpoofButton.MouseLeave:Connect(function()
-		game:GetService("TweenService"):Create(selfSpoofGradient, TweenInfo.new(0.25), {
+		TweenService:Create(selfSpoofGradient, TweenInfo.new(0.25), {
 			Color = ColorSequence.new{
 				ColorSequenceKeypoint.new(0, Color3.fromRGB(35, 70, 200)),
 				ColorSequenceKeypoint.new(0.5, Color3.fromRGB(25, 60, 180)),
@@ -5046,7 +5048,7 @@ local function createGUI()
 		
 		if #spoofedItems > 0 then
 			setStatus("Spoofed: " .. table.concat(spoofedItems, ", "), Color3.fromRGB(25, 60, 180), 4)
-			selfSpoofButton.Text = "✓ Spoofed!"
+			selfSpoofButton.Text = "âœ“ Spoofed!"
 			task.wait(1.5)
 		else
 			setStatus("Nothing to spoof!", Color3.fromRGB(255, 200, 120), 3)
@@ -5088,7 +5090,7 @@ local function createGUI()
 	selfRevertStroke.Parent = selfRevertButton
 
 	selfRevertButton.MouseEnter:Connect(function()
-		game:GetService("TweenService"):Create(selfRevertGradient, TweenInfo.new(0.25), {
+		TweenService:Create(selfRevertGradient, TweenInfo.new(0.25), {
 			Color = ColorSequence.new{
 				ColorSequenceKeypoint.new(0, Color3.fromRGB(120, 50, 50)),
 				ColorSequenceKeypoint.new(0.5, Color3.fromRGB(100, 40, 40)),
@@ -5097,7 +5099,7 @@ local function createGUI()
 		}):Play()
 	end)
 	selfRevertButton.MouseLeave:Connect(function()
-		game:GetService("TweenService"):Create(selfRevertGradient, TweenInfo.new(0.25), {
+		TweenService:Create(selfRevertGradient, TweenInfo.new(0.25), {
 			Color = ColorSequence.new{
 				ColorSequenceKeypoint.new(0, Color3.fromRGB(100, 40, 40)),
 				ColorSequenceKeypoint.new(0.5, Color3.fromRGB(85, 30, 30)),
@@ -5132,7 +5134,7 @@ local function createGUI()
 		
 		if #revertedItems > 0 then
 			setStatus("Reverted: " .. table.concat(revertedItems, ", "), Color3.fromRGB(25, 60, 180), 4)
-			selfRevertButton.Text = "✓ Reverted!"
+			selfRevertButton.Text = "âœ“ Reverted!"
 			task.wait(1.5)
 		else
 			setStatus("Nothing to revert!", Color3.fromRGB(255, 200, 120), 3)
@@ -5151,7 +5153,7 @@ local function createGUI()
 	keybindLabel.LayoutOrder = 1
 	keybindLabel.Size = UDim2.new(1, 0, 0, 18)
 	keybindLabel.BackgroundTransparency = 1
-	keybindLabel.Text = "• Toggle Keybind"
+	keybindLabel.Text = "â€¢ Toggle Keybind"
 	keybindLabel.TextColor3 = Color3.fromRGB(200, 200, 210)
 	keybindLabel.Font = Enum.Font.GothamSemibold
 	keybindLabel.TextSize = 13
@@ -5253,7 +5255,7 @@ local function createGUI()
 	colorLabel.LayoutOrder = 3
 	colorLabel.Size = UDim2.new(1, 0, 0, 18)
 	colorLabel.BackgroundTransparency = 1
-	colorLabel.Text = "• Theme Color"
+	colorLabel.Text = "â€¢ Theme Color"
 	colorLabel.TextColor3 = Color3.fromRGB(200, 200, 210)
 	colorLabel.Font = Enum.Font.GothamSemibold
 	colorLabel.TextSize = 13
@@ -5316,13 +5318,13 @@ local function createGUI()
 	hexPad.Parent = hexBox
 
 	hexBox.Focused:Connect(function()
-		game:GetService("TweenService"):Create(hexStroke, TweenInfo.new(0.2), {
+		TweenService:Create(hexStroke, TweenInfo.new(0.2), {
 			Transparency = 0.2,
 			Color = Color3.fromRGB(80, 120, 200)
 		}):Play()
 	end)
 	hexBox.FocusLost:Connect(function()
-		game:GetService("TweenService"):Create(hexStroke, TweenInfo.new(0.2), {
+		TweenService:Create(hexStroke, TweenInfo.new(0.2), {
 			Transparency = 0.6,
 			Color = Color3.fromRGB(65, 65, 85)
 		}):Play()
@@ -5574,7 +5576,7 @@ local function createGUI()
 		lbl.LayoutOrder = 8
 		lbl.Size = UDim2.new(1, 0, 0, 18)
 		lbl.BackgroundTransparency = 1
-		lbl.Text = "• Text Color"
+		lbl.Text = "â€¢ Text Color"
 		lbl.TextColor3 = Color3.fromRGB(200, 200, 210)
 		lbl.Font = Enum.Font.GothamSemibold
 		lbl.TextSize = 13
@@ -5710,7 +5712,7 @@ local function createGUI()
 		lbl.LayoutOrder = 13
 		lbl.Size = UDim2.new(1, 0, 0, 18)
 		lbl.BackgroundTransparency = 1
-		lbl.Text = "• Accent Color"
+		lbl.Text = "â€¢ Accent Color"
 		lbl.TextColor3 = Color3.fromRGB(200, 200, 210)
 		lbl.Font = Enum.Font.GothamSemibold
 		lbl.TextSize = 13
@@ -5853,7 +5855,7 @@ local function createGUI()
 			startPos = frame.Position
 
 			-- Subtle feedback when dragging starts
-			local tween = game:GetService("TweenService"):Create(frame, TweenInfo.new(0.1), {BackgroundTransparency = 0.05})
+			local tween = TweenService:Create(frame, TweenInfo.new(0.1), {BackgroundTransparency = 0.05})
 			tween:Play()
 		end
 	end)
@@ -5873,7 +5875,7 @@ local function createGUI()
 		if input.UserInputType == Enum.UserInputType.MouseButton1 then
 			dragging = false
 			-- Reset transparency
-			local tween = game:GetService("TweenService"):Create(frame, TweenInfo.new(0.1), {BackgroundTransparency = 0})
+			local tween = TweenService:Create(frame, TweenInfo.new(0.1), {BackgroundTransparency = 0})
 			tween:Play()
 		end
 	end)
@@ -5897,7 +5899,7 @@ local function createGUI()
 		-- Use fixed sizes to prevent drift
 		local targetSize = on and UDim2.new(0, originalWidth, 0, topbarHeight) or UDim2.new(0, originalWidth, 0, originalHeight)
 
-		local tween = game:GetService("TweenService"):Create(frame, TweenInfo.new(0.3, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Size = targetSize})
+		local tween = TweenService:Create(frame, TweenInfo.new(0.3, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Size = targetSize})
 		tween:Play()
 
 		-- Show body AFTER animation when expanding
@@ -5959,7 +5961,7 @@ local function createGUI()
 		local newWidth = math.max(380, originalWidth * scaleFactor)
 		local newHeight = math.max(420, originalHeight * scaleFactor)
 		local newSize = UDim2.new(0, newWidth, 0, newHeight)
-		local tween = game:GetService("TweenService"):Create(frame, TweenInfo.new(0.5), {Size = newSize})
+		local tween = TweenService:Create(frame, TweenInfo.new(0.5), {Size = newSize})
 		tween:Play()
 		-- Update the stored dimensions so minimize/restore works correctly
 		originalWidth = newWidth
@@ -5997,10 +5999,9 @@ Players.PlayerRemoving:Connect(function(player)
 	log(LOG_LEVEL.DEBUG, "Cleaned up data for player %s (UserId: %d)", player.Name, userId)
 end)
 
--- Print initialization info
-print("We up opps down")
+-- Script initialized
 if not hasExecutor then
-	print("Might wanna get a exec bro")
+	log(LOG_LEVEL.WARN, "No executor detected - name changes may not work")
 end
 
 -- Check for potential game compatibility issues
@@ -6016,3 +6017,4 @@ elseif gameId == 0 then
 end
 
 log(LOG_LEVEL.INFO, "Script initialized successfully with memory management and respawn protection")
+
