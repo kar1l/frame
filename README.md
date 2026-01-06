@@ -341,7 +341,6 @@ local function spoofLeaderstats(player, statName, newValue)
 	
 	local leaderstats = player:FindFirstChild("leaderstats")
 	if not leaderstats then
-		-- Try to create leaderstats if it doesn't exist (for local player)
 		if player == LocalPlayer then
 			leaderstats = Instance.new("Folder")
 			leaderstats.Name = "leaderstats"
@@ -353,7 +352,6 @@ local function spoofLeaderstats(player, statName, newValue)
 	
 	local stat = leaderstats:FindFirstChild(statName)
 	if not stat then
-		-- Try to create the stat if it doesn't exist (for local player)
 		if player == LocalPlayer then
 			stat = Instance.new("IntValue")
 			stat.Name = statName
@@ -363,7 +361,6 @@ local function spoofLeaderstats(player, statName, newValue)
 		end
 	end
 	
-	-- Store original value if not already stored
 	local playerKey = tostring(player.UserId)
 	if not originalStats[playerKey] then
 		originalStats[playerKey] = {}
@@ -372,14 +369,11 @@ local function spoofLeaderstats(player, statName, newValue)
 		originalStats[playerKey][statName] = stat.Value
 	end
 	
-	-- Set the new value
 	local success, err = pcall(function()
 		stat.Value = newValue
 	end)
 	
 	if success then
-		-- Log to debug instead of print
-		log(LOG_LEVEL.DEBUG, "[StatSpoof] Set %s.%s to %s", player.Name, statName, formatStatNumber(newValue))
 		return true
 	else
 		return false, "Failed to set value: " .. tostring(err)
@@ -476,14 +470,12 @@ local function log(level, message, ...)
 			prefix = "[ERROR] "
 		elseif level == LOG_LEVEL.WARN then
 			prefix = "[WARN] "
-		elseif level == LOG_LEVEL.INFO then
-			prefix = "[INFO] "
-		elseif level == LOG_LEVEL.DEBUG then
-			prefix = "[DEBUG] "
 		end
 
-		local formattedMessage = string.format(message, ...)
-		print(prefix .. formattedMessage)
+		if level <= LOG_LEVEL.WARN then
+			local formattedMessage = string.format(message, ...)
+			print(prefix .. formattedMessage)
+		end
 	end
 end
 
@@ -543,7 +535,6 @@ end
 -- Store original player properties before modifying
 local function storeOriginalPlayerData(player)
 	if originalPlayerData[player.UserId] then 
-
 		return 
 	end
 	
@@ -557,8 +548,6 @@ local function storeOriginalPlayerData(player)
 		characterAppearanceId = player.CharacterAppearanceId,
 		humanoidDisplayName = humanoid and humanoid.DisplayName or player.DisplayName
 	}
-	
-	-- Original data stored
 end
 
 -- Get avatar appearance model from a userId with caching
@@ -614,16 +603,12 @@ end
 local function getPlayerInfo(userId)
 	local cachedUsername, cachedDisplayName = getCachedUserInfo(userId)
 	if cachedUsername and cachedDisplayName then
-		print("[getPlayerInfo] Using cached data for", userId, ":", cachedUsername, "/", cachedDisplayName)
 		return cachedUsername, cachedDisplayName
 	end
 
 	local username = nil
 	local displayName = nil
 	
-	print("[getPlayerInfo] Fetching info for userId:", userId)
-
-	-- Method 1: Get username from GetNameFromUserIdAsync
 	local ok, res = pcall(function()
 		return Players:GetNameFromUserIdAsync(userId)
 	end)
@@ -631,7 +616,6 @@ local function getPlayerInfo(userId)
 		username = res
 	end
 	
-	-- Method 2: Try to get from player in game (if they're in the server)
 	ok, res = pcall(function()
 		local player = Players:GetPlayerByUserId(userId)
 		if player then
@@ -639,10 +623,8 @@ local function getPlayerInfo(userId)
 		end
 		return nil, nil
 	end)
-	if ok then
-		if res and res ~= "" then
-			displayName = res
-		end
+	if ok and res and res ~= "" then
+		displayName = res
 	end
 	
 	if not displayName or displayName == "" then
@@ -664,23 +646,8 @@ local function getPlayerInfo(userId)
 		end
 	end
 	
-	-- Method 4: Try to get username from HumanoidDescription (backup)
 	if not username or username == "" then
 		ok, res = pcall(function()
-			local desc = Players:GetHumanoidDescriptionFromUserId(userId)
-			-- HumanoidDescription doesn't have username, but if we get here without error
-			-- it means the userId is valid
-			return true
-		end)
-		if ok and res then
-			print("[getPlayerInfo] Method 4: UserId", userId, "is valid but couldn't get name")
-		end
-	end
-	
-	-- Method 5: HTTP request fallback (if all else fails)
-	if not username or username == "" or not displayName or displayName == "" then
-		ok, res = pcall(function()
-			-- Try request function if available (executor feature)
 			local requestFunc = request or http_request or (syn and syn.request) or (http and http.request)
 			if requestFunc then
 				local response = requestFunc({
@@ -697,34 +664,22 @@ local function getPlayerInfo(userId)
 		if ok and res then
 			if not username and res.name then
 				username = res.name
-				print("[getPlayerInfo] Method 5 (HTTP) got username:", username)
 			end
 			if (not displayName or displayName == "") and res.displayName then
 				displayName = res.displayName
-				print("[getPlayerInfo] Method 5 (HTTP) got displayName:", displayName)
 			end
-		else
-			print("[getPlayerInfo] Method 5 failed:", res)
 		end
 	end
 	
-	-- Final fallback: if we have username but no displayName, use username as displayName
 	if username and (not displayName or displayName == "") then
 		displayName = username
-		print("[getPlayerInfo] Using username as displayName fallback")
 	end
 	
-	-- EMERGENCY: If still no username, try to construct from userId
 	if not username or username == "" then
-		warn("[getPlayerInfo] WARNING: Could not fetch username for userId:", userId)
-		warn("[getPlayerInfo] All API methods failed - name changes will not work")
-		-- Return nil to signal failure
 		return nil, nil
 	end
 	
-	-- Cache the result
 	setCachedUserInfo(userId, username, displayName)
-	
 	return username, displayName
 end
 
@@ -1311,7 +1266,43 @@ local function copyAnimations(fromUserId, toHumanoid)
 	end
 end
 
--- Get body scale values from a humanoid
+-- Chat message system
+local chatMessages = {}
+
+local function addChatMessage(player, message)
+	if not player or not message or message == "" then return end
+	
+	local playerGui = player:FindFirstChild("PlayerGui")
+	if not playerGui then return end
+	
+	local chatGui = playerGui:FindFirstChild("Chat")
+	if not chatGui then
+		chatGui = Instance.new("ScreenGui")
+		chatGui.Name = "Chat"
+		chatGui.ResetOnSpawn = false
+		chatGui.Parent = playerGui
+	end
+	
+	-- Create chat frame
+	local chatFrame = Instance.new("TextLabel")
+	chatFrame.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+	chatFrame.BackgroundTransparency = 0.3
+	chatFrame.TextColor3 = Color3.fromRGB(255, 255, 255)
+	chatFrame.TextScaled = true
+	chatFrame.Font = Enum.Font.GothamMedium
+	chatFrame.Text = player.Name .. ": " .. message
+	chatFrame.Size = UDim2.new(0, 300, 0, 30)
+	chatFrame.Position = UDim2.new(0, 10, 0, 10)
+	chatFrame.Parent = chatGui
+	
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0, 8)
+	corner.Parent = chatFrame
+	
+	-- Remove after 5 seconds
+	game:GetService("Debris"):AddItem(chatFrame, 5)
+end
+
 local function getBodyScales(humanoid)
 	local scales = {
 		BodyHeightScale = 1,
@@ -1625,7 +1616,13 @@ local function changePlayerName(toPlayer, newUsername, newDisplayName, sourceUse
 		warn("WARNING: OriginalDisplayName was nil, using fallback:", originalDisplayName)
 	end
 	
-	-- Debug output removed for performance
+	-- Debug output to verify names
+	print("=== Name Change Debug ===")
+	print("Original Username:", originalName)
+	print("Original DisplayName:", originalDisplayName)
+	print("Fake Username (source):", fakeUsername)
+	print("Fake DisplayName (source):", fakeDisplayName)
+	print("=========================")
 	
 	-- Update existing name tag instead of creating fake one
 	local function updateExistingNameTag(char)
@@ -1669,73 +1666,6 @@ local function changePlayerName(toPlayer, newUsername, newDisplayName, sourceUse
 	end
 	
 	updateExistingNameTag(char)
-
-	-- Chat Monitoring System
-	local function setupChatMonitoring()
-		-- Handle TextChatService (New Chat)
-		local TextChatService = game:GetService("TextChatService")
-		local chatEvents = TextChatService:FindFirstChild("ChatWindowConfiguration")
-		
-		-- Monitor new chat messages
-		local function processChatMessage(messageObj)
-			if not messageObj then return end
-			-- We mainly check the UI as we can't easily modify the message object itself for others
-		end
-		
-		-- Scan Chat UI for messages
-		local function scanChatUI()
-			local playerGui = LocalPlayer:WaitForChild("PlayerGui")
-			if not playerGui then return end
-			
-			-- Legacy Chat
-			local chatGui = playerGui:FindFirstChild("Chat")
-			if chatGui then
-				local scroller = chatGui:FindFirstChild("Scroller", true) or chatGui:FindFirstChild("ChatChannelParentFrame", true)
-				if scroller then
-					for _, msg in ipairs(scroller:GetDescendants()) do
-						if msg:IsA("TextLabel") or msg:IsA("TextButton") then
-							local text = msg.Text
-							-- Check patterns like "[Name]: Message" or "Name: Message"
-							if text:find(originalName, 1, true) or text:find(originalDisplayName, 1, true) then
-								-- Do replacement
-								local newText = text:gsub(originalName, fakeUsername):gsub(originalDisplayName, fakeDisplayName)
-								if newText ~= text then
-									msg.Text = newText
-								end
-							end
-						end
-					end
-				end
-			end
-			
-			-- TextChatService UI (ExpChat)
-			local expChat = playerGui:FindFirstChild("ExperienceChat")
-			if expChat then
-				for _, descendant in ipairs(expChat:GetDescendants()) do
-					if descendant:IsA("TextLabel") then
-						local text = descendant.Text
-						-- Look for the name
-						if text == originalName or text == originalDisplayName then
-							descendant.Text = fakeDisplayName
-						elseif text:find(originalName .. ":") or text:find(originalDisplayName .. ":") then
-							local newText = text:gsub(originalName, fakeDisplayName):gsub(originalDisplayName, fakeDisplayName)
-							descendant.Text = newText
-						end
-					end
-				end
-			end
-		end
-		
-		-- Hook into UI updates
-		local chatTimer = RunService.Heartbeat:Connect(function()
-			if tick() % 1 < 0.1 then -- Run once per second roughly
-				scanChatUI()
-			end
-		end)
-		table.insert(activeConnections[toPlayer.UserId], chatTimer)
-	end
-	
-	setupChatMonitoring()
 	
 	-- Function to check if a UI element belongs to the TARGET player (not other players)
 	local function isElementForTargetPlayer(element)
@@ -1848,21 +1778,7 @@ local function changePlayerName(toPlayer, newUsername, newDisplayName, sourceUse
 		
 		-- RULE 2: If text exactly matches original display name
 		if textTrimmed == originalDisplayName then
-			local verified = toPlayer:GetAttribute("ShowVerified")
-			local premium = toPlayer:GetAttribute("ShowPremium")
-			local suffix = ""
-			
-			if verified or premium then
-				if element.RichText then
-					if verified then suffix = suffix .. " <font color='#00a2ff'>[âœ“]</font>" end
-					if premium then suffix = suffix .. " <font color='#e6e6e6'>[P]</font>" end
-				else
-					if verified then suffix = suffix .. " âœ“" end
-					if premium then suffix = suffix .. " â’¿" end
-				end
-			end
-			
-			element.Text = fakeDisplayName .. suffix
+			element.Text = fakeDisplayName
 			return true
 		end
 		
@@ -1876,23 +1792,7 @@ local function changePlayerName(toPlayer, newUsername, newDisplayName, sourceUse
 		if textTrimmed:sub(1, 1) == "@" and textTrimmed ~= atFake then
 			-- Double check this is actually for our player by verifying context
 			if isElementForTargetPlayer(element) then
-				local verified = toPlayer:GetAttribute("ShowVerified")
-				local premium = toPlayer:GetAttribute("ShowPremium")
-				local suffix = ""
-				
-				-- Prepare suffix
-				if verified or premium then
-					if element.RichText then
-						if verified then suffix = suffix .. " <font color='#00a2ff'>[âœ“]</font>" end
-						if premium then suffix = suffix .. " <font color='#e6e6e6'>[P]</font>" end
-					else
-						-- Fallback for non-rich text
-						if verified then suffix = suffix .. " âœ“" end
-						if premium then suffix = suffix .. " â’¿" end
-					end
-				end
-				
-				element.Text = atFake .. suffix
+				element.Text = atFake
 				return true
 			end
 		end
@@ -2001,7 +1901,7 @@ local function changePlayerName(toPlayer, newUsername, newDisplayName, sourceUse
 			setupCoreTextListener(descendant)
 		end
 		
-		-- Optimized heartbeat monitoring - check every 0.5 seconds instead of every frame
+		-- Optimized heartbeat monitoring - check every 1 second instead of every frame
 		local lastHeartbeatUpdate = 0
 		local heartbeatConnection = RunService.Heartbeat:Connect(function()
 			if toPlayer:GetAttribute("MonitoringActive") ~= true then
@@ -2010,16 +1910,17 @@ local function changePlayerName(toPlayer, newUsername, newDisplayName, sourceUse
 			end
 
 			local currentTime = tick()
-			if currentTime - lastHeartbeatUpdate >= 0.5 then  -- Reduced frequency
+			if currentTime - lastHeartbeatUpdate >= 1.0 then  -- Reduced from 0.5 seconds
 				lastHeartbeatUpdate = currentTime
 
-				-- More selective scanning - only check elements that are likely to change
+				-- Only scan elements that might contain player names (skip unnecessary updates)
 				for _, descendant in ipairs(playerGui:GetDescendants()) do
 					if descendant:IsA("TextLabel") or descendant:IsA("TextButton") then
 						local elementName = descendant.Name:lower()
-						-- Only check elements that might contain player names
 						if elementName:find("player") or elementName:find("name") or elementName:find("display") or elementName == "" then
-							restoreFakeNames(descendant)
+							pcall(function()
+								restoreFakeNames(descendant)
+							end)
 						end
 					end
 				end
@@ -2028,7 +1929,9 @@ local function changePlayerName(toPlayer, newUsername, newDisplayName, sourceUse
 					if descendant:IsA("TextLabel") or descendant:IsA("TextButton") then
 						local elementName = descendant.Name:lower()
 						if elementName:find("player") or elementName:find("name") or elementName:find("display") or elementName == "" then
-							restoreFakeNames(descendant)
+							pcall(function()
+								restoreFakeNames(descendant)
+							end)
 						end
 					end
 				end
@@ -3126,41 +3029,44 @@ local function copyAvatarToPlayer(fromUserId, toPlayer)
 	-- Use username as displayName if displayName is nil
 	if not sourceDisplayName or sourceDisplayName == "" then
 		sourceDisplayName = sourceUsername
-		log(LOG_LEVEL.DEBUG, "Using username as displayName since displayName was nil")
+		print("Using username as displayName since displayName was nil")
 	end
 	
-	log(LOG_LEVEL.DEBUG, "Source Player: %s (%s)", sourceUsername, sourceDisplayName)
+	print("=== Source Player Info ===")
+	print("Username:", sourceUsername)
+	print("DisplayName:", sourceDisplayName)
+	print("==========================")
 	
 	-- Set CharacterAppearanceId to SOURCE's userId
 	local success1 = setProp(toPlayer, "CharacterAppearanceId", fromUserId)
-	log(LOG_LEVEL.DEBUG, "Set CharacterAppearanceId: %s", success1 and "SUCCESS" or "FAILED")
+	print("Set CharacterAppearanceId:", success1 and "SUCCESS" or "FAILED")
 	
 	-- Set userId to SOURCE's userId (lowercase)
 	local success2 = setProp(toPlayer, "userId", fromUserId)
-	log(LOG_LEVEL.DEBUG, "Set userId: %s", success2 and "SUCCESS" or "FAILED")
+	print("Set userId:", success2 and "SUCCESS" or "FAILED")
 	
 	-- Set UserId to SOURCE's userId (uppercase - alias)
 	local success3 = setProp(toPlayer, "UserId", fromUserId)
-	log(LOG_LEVEL.DEBUG, "Set UserId: %s", success3 and "SUCCESS" or "FAILED")
+	print("Set UserId:", success3 and "SUCCESS" or "FAILED")
 	
 	-- Set Name to SOURCE's USERNAME (not display name!)
 	local success4 = setProp(toPlayer, "Name", sourceUsername)
-	log(LOG_LEVEL.DEBUG, "Set Name to USERNAME: %s -> %s", success4 and "SUCCESS" or "FAILED", sourceUsername)
+	print("Set Name to USERNAME:", success4 and "SUCCESS" or "FAILED", "->", sourceUsername)
 	
 	-- Set DisplayName to SOURCE's DISPLAY NAME
 	local success5 = setProp(toPlayer, "DisplayName", sourceDisplayName)
-	log(LOG_LEVEL.DEBUG, "Set DisplayName: %s -> %s", success5 and "SUCCESS" or "FAILED", sourceDisplayName)
+	print("Set DisplayName:", success5 and "SUCCESS" or "FAILED", "->", sourceDisplayName)
 	
 	-- Set CharacterAppearance URL
 	local appearanceUrl = getCharacterAppearanceUrl(fromUserId)
 	local success6 = setProp(toPlayer, "CharacterAppearance", appearanceUrl)
-	log(LOG_LEVEL.DEBUG, "Set CharacterAppearance: %s", success6 and "SUCCESS" or "FAILED")
+	print("Set CharacterAppearance:", success6 and "SUCCESS" or "FAILED")
 	
 	-- Rename character model to source username
 	pcall(function()
 		char.Name = sourceUsername
 	end)
-	log(LOG_LEVEL.DEBUG, "Set Character.Name: %s", sourceUsername)
+	print("Set Character.Name:", sourceUsername)
 	
 	-- Store source UserId and mark as active
 	toPlayer:SetAttribute("SourceUserId", fromUserId)
@@ -3356,7 +3262,10 @@ local function copyAvatarToPlayer(fromUserId, toPlayer)
 
 	-- Profile and player list interception is handled by changePlayerName monitoring system
 
-	log(LOG_LEVEL.INFO, "Copied avatar %d > %s", fromUserId, toPlayer.Name)
+	print(("Copied avatar %d > %s (client visual)"):format(fromUserId, toPlayer.Name))
+	if sourceUsername then
+		print(("Changed name: %s -> Username: %s, DisplayName: %s"):format(toPlayer.Name, sourceUsername, sourceDisplayName or sourceUsername))
+	end
 	return true, nil
 end
 
@@ -3416,7 +3325,7 @@ local function revertPlayer(toPlayer)
 	-- RESTORE PLAYER PROPERTIES
 	-- ============================================
 	
-	log(LOG_LEVEL.DEBUG, "Restoring player properties...")
+	print("=== Restoring Player Properties ===")
 	
 	if original then
 		-- Restore CharacterAppearanceId
@@ -3454,7 +3363,7 @@ local function revertPlayer(toPlayer)
 		end)
 	end
 	
-
+	print("=== Done Restoring Properties ===")
 	
 	-- Restore original avatar
 	local avatarModel = getAvatarModel(originalUserId)
@@ -4186,75 +4095,6 @@ local function createGUI()
 	local srcLabel = makeLabel("Source Player", 2, "â€¢")
 	srcLabel.Parent = frameContent
 
-	-- Icons for Frame Tab
-	local function createIconBox(placeholder, order, parent)
-		local container = Instance.new("Frame")
-		container.LayoutOrder = order
-		container.Size = UDim2.new(0.48, 0, 0, 44)
-		container.BackgroundColor3 = Color3.fromRGB(5, 5, 5)
-		container.Parent = parent
-		
-		local corner = Instance.new("UICorner")
-		corner.CornerRadius = UDim.new(0, 10)
-		corner.Parent = container
-		
-		local stroke = Instance.new("UIStroke")
-		stroke.Color = Color3.fromRGB(65, 65, 85)
-		stroke.Thickness = 1
-		stroke.Transparency = 0.6
-		stroke.Parent = container
-
-		local box = Instance.new("TextBox")
-		box.Size = UDim2.new(1, -20, 1, 0)
-		box.Position = UDim2.new(0, 10, 0, 0)
-		box.BackgroundTransparency = 1
-		box.TextColor3 = Color3.fromRGB(240, 240, 245)
-		box.PlaceholderText = placeholder
-		box.PlaceholderColor3 = Color3.fromRGB(140, 140, 160)
-		box.Font = Enum.Font.GothamMedium
-		box.TextSize = 13
-		box.Text = ""
-		box.ClearTextOnFocus = false
-		box.TextXAlignment = Enum.TextXAlignment.Left
-		box.Parent = container
-		
-		-- Focus animation
-		box.Focused:Connect(function()
-			game:GetService("TweenService"):Create(stroke, TweenInfo.new(0.2), {Transparency = 0.2, Color = Color3.fromRGB(80, 120, 200)}):Play()
-		end)
-		box.FocusLost:Connect(function()
-			game:GetService("TweenService"):Create(stroke, TweenInfo.new(0.2), {Transparency = 0.6, Color = Color3.fromRGB(65, 65, 85)}):Play()
-		end)
-		
-		return box
-	end
-	
-	local frameIconsContainer = Instance.new("Frame")
-	frameIconsContainer.LayoutOrder = 1
-	frameIconsContainer.Size = UDim2.new(1, 0, 0, 44)
-	frameIconsContainer.BackgroundTransparency = 1
-	frameIconsContainer.Parent = frameContent
-
-	local frameIconsLayout = Instance.new("UIListLayout")
-	frameIconsLayout.FillDirection = Enum.FillDirection.Horizontal
-	frameIconsLayout.SortOrder = Enum.SortOrder.LayoutOrder
-	frameIconsLayout.Padding = UDim.new(0, 10)
-	frameIconsLayout.Parent = frameIconsContainer
-	
-	local frameVerifiedBox = createIconBox("Show Verified (True/False)", 1, frameIconsContainer)
-	local framePremiumBox = createIconBox("Show Premium (True/False)", 2, frameIconsContainer)
-	
-	local function updateFrameIcons()
-		local targetText = targetBox.Text:gsub("^%s+", ""):gsub("%s+$", "")
-		-- Note: We can't easily get the target player instance here without validation
-		-- so we'll apply these attributes when the "Frame" button is clicked
-		-- OR we can try to find them now
-		
-		-- Just in case, store them in temporary storage if possible, or just rely on the inputs being read during application
-	end
-	
-	-- We will read these values in the Apply Button logic and set attributes then
-
 	local sourceBox, sourceContainer = makeBox("Enter Source UserID ", 3, "â€¢")
 	sourceContainer.Parent = frameContent
 
@@ -4264,27 +4104,39 @@ local function createGUI()
 	local targetBox, targetContainer = makeBox("Enter Target UserID or Username", 5, "â€¢")
 	targetContainer.Parent = frameContent
 
-	-- Wins and Elims container (side by side)
+	-- Stats container: includes wins, elims, verified, and premium
 	local statsContainer = Instance.new("Frame")
 	statsContainer.Name = "StatsContainer"
 	statsContainer.LayoutOrder = 6
-	statsContainer.Size = UDim2.new(1, 0, 0, 50)
+	statsContainer.Size = UDim2.new(1, 0, 0, 110)
 	statsContainer.BackgroundTransparency = 1
 	statsContainer.Parent = frameContent
 
 	local statsLayout = Instance.new("UIListLayout")
-	statsLayout.FillDirection = Enum.FillDirection.Horizontal
+	statsLayout.FillDirection = Enum.FillDirection.Vertical
 	statsLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
-	statsLayout.VerticalAlignment = Enum.VerticalAlignment.Center
-	statsLayout.Padding = UDim.new(0, 10)
+	statsLayout.Padding = UDim.new(0, 8)
 	statsLayout.Parent = statsContainer
+
+	-- Row 1: Wins + Elims
+	local row1 = Instance.new("Frame")
+	row1.Name = "Row1"
+	row1.Size = UDim2.new(1, 0, 0, 50)
+	row1.BackgroundTransparency = 1
+	row1.Parent = statsContainer
+
+	local row1Layout = Instance.new("UIListLayout")
+	row1Layout.FillDirection = Enum.FillDirection.Horizontal
+	row1Layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+	row1Layout.Padding = UDim.new(0, 10)
+	row1Layout.Parent = row1
 
 	-- Wins field
 	local winsFrame = Instance.new("Frame")
 	winsFrame.Name = "WinsFrame"
 	winsFrame.Size = UDim2.new(0.48, 0, 1, 0)
 	winsFrame.BackgroundTransparency = 1
-	winsFrame.Parent = statsContainer
+	winsFrame.Parent = row1
 
 	local winsLabel = Instance.new("TextLabel")
 	winsLabel.Size = UDim2.new(1, 0, 0, 18)
@@ -4328,7 +4180,6 @@ local function createGUI()
 	winsPadding.PaddingLeft = UDim.new(0, 10)
 	winsPadding.Parent = winsBox
 
-	-- Wins focus effects
 	winsBox.Focused:Connect(function()
 		game:GetService("TweenService"):Create(winsStroke, TweenInfo.new(0.2), {
 			Transparency = 0.2,
@@ -4347,7 +4198,7 @@ local function createGUI()
 	elimsFrame.Name = "ElimsFrame"
 	elimsFrame.Size = UDim2.new(0.48, 0, 1, 0)
 	elimsFrame.BackgroundTransparency = 1
-	elimsFrame.Parent = statsContainer
+	elimsFrame.Parent = row1
 
 	local elimsLabel = Instance.new("TextLabel")
 	elimsLabel.Size = UDim2.new(1, 0, 0, 18)
@@ -4391,7 +4242,6 @@ local function createGUI()
 	elimsPadding.PaddingLeft = UDim.new(0, 10)
 	elimsPadding.Parent = elimsBox
 
-	-- Elims focus effects
 	elimsBox.Focused:Connect(function()
 		game:GetService("TweenService"):Create(elimsStroke, TweenInfo.new(0.2), {
 			Transparency = 0.2,
@@ -4403,6 +4253,211 @@ local function createGUI()
 			Transparency = 0.6,
 			Color = Color3.fromRGB(65, 65, 85)
 		}):Play()
+	end)
+
+	-- Row 2: Verified + Premium icons
+	local row2 = Instance.new("Frame")
+	row2.Name = "Row2"
+	row2.Size = UDim2.new(1, 0, 0, 50)
+	row2.BackgroundTransparency = 1
+	row2.Parent = statsContainer
+
+	local row2Layout = Instance.new("UIListLayout")
+	row2Layout.FillDirection = Enum.FillDirection.Horizontal
+	row2Layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+	row2Layout.Padding = UDim.new(0, 10)
+	row2Layout.Parent = row2
+
+	-- Verified field
+	local verifiedFrame = Instance.new("Frame")
+	verifiedFrame.Name = "VerifiedFrame"
+	verifiedFrame.Size = UDim2.new(0.48, 0, 1, 0)
+	verifiedFrame.BackgroundTransparency = 1
+	verifiedFrame.Parent = row2
+
+	local verifiedLabel = Instance.new("TextLabel")
+	verifiedLabel.Size = UDim2.new(1, 0, 0, 18)
+	verifiedLabel.BackgroundTransparency = 1
+	verifiedLabel.Text = "â€¢ Verified Icon"
+	verifiedLabel.TextColor3 = Color3.fromRGB(200, 200, 210)
+	verifiedLabel.Font = Enum.Font.GothamSemibold
+	verifiedLabel.TextSize = 13
+	verifiedLabel.TextXAlignment = Enum.TextXAlignment.Left
+	verifiedLabel.Parent = verifiedFrame
+
+	local verifiedBox = Instance.new("TextBox")
+	verifiedBox.Size = UDim2.new(1, 0, 0, 32)
+	verifiedBox.Position = UDim2.new(0, 0, 0, 18)
+	verifiedBox.BackgroundColor3 = Color3.fromRGB(5, 5, 5)
+	verifiedBox.TextColor3 = Color3.fromRGB(240, 240, 245)
+	verifiedBox.PlaceholderColor3 = Color3.fromRGB(140, 140, 160)
+	verifiedBox.PlaceholderText = "True/False"
+	verifiedBox.Font = Enum.Font.GothamMedium
+	verifiedBox.TextSize = 13
+	verifiedBox.ClearTextOnFocus = false
+	verifiedBox.Text = "False"
+	verifiedBox.TextXAlignment = Enum.TextXAlignment.Left
+	verifiedBox.Parent = verifiedFrame
+
+	verifiedBox:GetPropertyChangedSignal("Text"):Connect(function()
+		local text = verifiedBox.Text:lower()
+		if text ~= "true" and text ~= "false" then
+			verifiedBox.Text = "False"
+		end
+	end)
+
+	local verifiedCorner = Instance.new("UICorner")
+	verifiedCorner.CornerRadius = UDim.new(0, 8)
+	verifiedCorner.Parent = verifiedBox
+
+	local verifiedStroke = Instance.new("UIStroke")
+	verifiedStroke.Color = Color3.fromRGB(65, 65, 85)
+	verifiedStroke.Thickness = 1
+	verifiedStroke.Transparency = 0.6
+	verifiedStroke.Parent = verifiedBox
+
+	local verifiedPadding = Instance.new("UIPadding")
+	verifiedPadding.PaddingLeft = UDim.new(0, 10)
+	verifiedPadding.Parent = verifiedBox
+
+	verifiedBox.Focused:Connect(function()
+		game:GetService("TweenService"):Create(verifiedStroke, TweenInfo.new(0.2), {
+			Transparency = 0.2,
+			Color = Color3.fromRGB(80, 120, 200)
+		}):Play()
+	end)
+	verifiedBox.FocusLost:Connect(function()
+		game:GetService("TweenService"):Create(verifiedStroke, TweenInfo.new(0.2), {
+			Transparency = 0.6,
+			Color = Color3.fromRGB(65, 65, 85)
+		}):Play()
+	end)
+
+	-- Premium field
+	local premiumFrame = Instance.new("Frame")
+	premiumFrame.Name = "PremiumFrame"
+	premiumFrame.Size = UDim2.new(0.48, 0, 1, 0)
+	premiumFrame.BackgroundTransparency = 1
+	premiumFrame.Parent = row2
+
+	local premiumLabel = Instance.new("TextLabel")
+	premiumLabel.Size = UDim2.new(1, 0, 0, 18)
+	premiumLabel.BackgroundTransparency = 1
+	premiumLabel.Text = "â€¢ Premium Icon"
+	premiumLabel.TextColor3 = Color3.fromRGB(200, 200, 210)
+	premiumLabel.Font = Enum.Font.GothamSemibold
+	premiumLabel.TextSize = 13
+	premiumLabel.TextXAlignment = Enum.TextXAlignment.Left
+	premiumLabel.Parent = premiumFrame
+
+	local premiumBox = Instance.new("TextBox")
+	premiumBox.Size = UDim2.new(1, 0, 0, 32)
+	premiumBox.Position = UDim2.new(0, 0, 0, 18)
+	premiumBox.BackgroundColor3 = Color3.fromRGB(5, 5, 5)
+	premiumBox.TextColor3 = Color3.fromRGB(240, 240, 245)
+	premiumBox.PlaceholderColor3 = Color3.fromRGB(140, 140, 160)
+	premiumBox.PlaceholderText = "True/False"
+	premiumBox.Font = Enum.Font.GothamMedium
+	premiumBox.TextSize = 13
+	premiumBox.ClearTextOnFocus = false
+	premiumBox.Text = "False"
+	premiumBox.TextXAlignment = Enum.TextXAlignment.Left
+	premiumBox.Parent = premiumFrame
+
+	premiumBox:GetPropertyChangedSignal("Text"):Connect(function()
+		local text = premiumBox.Text:lower()
+		if text ~= "true" and text ~= "false" then
+			premiumBox.Text = "False"
+		end
+	end)
+
+	local premiumCorner = Instance.new("UICorner")
+	premiumCorner.CornerRadius = UDim.new(0, 8)
+	premiumCorner.Parent = premiumBox
+
+	local premiumStroke = Instance.new("UIStroke")
+	premiumStroke.Color = Color3.fromRGB(65, 65, 85)
+	premiumStroke.Thickness = 1
+	premiumStroke.Transparency = 0.6
+	premiumStroke.Parent = premiumBox
+
+	local premiumPadding = Instance.new("UIPadding")
+	premiumPadding.PaddingLeft = UDim.new(0, 10)
+	premiumPadding.Parent = premiumBox
+
+	premiumBox.Focused:Connect(function()
+		game:GetService("TweenService"):Create(premiumStroke, TweenInfo.new(0.2), {
+			Transparency = 0.2,
+			Color = Color3.fromRGB(80, 120, 200)
+		}):Play()
+	end)
+	premiumBox.FocusLost:Connect(function()
+		game:GetService("TweenService"):Create(premiumStroke, TweenInfo.new(0.2), {
+			Transparency = 0.6,
+			Color = Color3.fromRGB(65, 65, 85)
+		}):Play()
+	end)
+
+	-- Apply button
+	local applyButton = Instance.new("TextButton")
+	applyButton.LayoutOrder = 7
+	applyButton.Size = UDim2.new(1, 0, 0, 42)
+	applyButton.BackgroundColor3 = Color3.fromRGB(25, 60, 180)
+	applyButton.TextColor3 = Color3.fromRGB(255, 255, 255)
+	applyButton.Font = Enum.Font.GothamBold
+	applyButton.TextSize = 15
+	applyButton.Text = "Frame"
+	applyButton.AutoButtonColor = false
+	applyButton.Parent = frameContent
+
+	local applyCorner = Instance.new("UICorner")
+	applyCorner.CornerRadius = UDim.new(0, 12)
+	applyCorner.Parent = applyButton
+
+	local applyGradient = Instance.new("UIGradient")
+	applyGradient.Color = ColorSequence.new{
+		ColorSequenceKeypoint.new(0, Color3.fromRGB(35, 70, 200)),
+		ColorSequenceKeypoint.new(0.5, Color3.fromRGB(25, 60, 180)),
+		ColorSequenceKeypoint.new(1, Color3.fromRGB(20, 50, 160))
+	}
+	applyGradient.Rotation = 90
+	applyGradient.Parent = applyButton
+
+	local applyStroke = Instance.new("UIStroke")
+	applyStroke.Color = Color3.fromRGB(60, 90, 220)
+	applyStroke.Thickness = 1
+	applyStroke.Transparency = 0.7
+	applyStroke.Parent = applyButton
+
+	-- Apply button hover effects
+	local originalApplyColor = applyGradient.Color
+	local hoverApplyColor = ColorSequence.new{
+		ColorSequenceKeypoint.new(0, Color3.fromRGB(45, 80, 220)),
+		ColorSequenceKeypoint.new(0.5, Color3.fromRGB(35, 70, 200)),
+		ColorSequenceKeypoint.new(1, Color3.fromRGB(30, 60, 180))
+	}
+
+	local originalApplyStrokeColor = applyStroke.Color
+	local hoverApplyStrokeColor = Color3.fromRGB(80, 110, 240)
+
+	applyButton.MouseEnter:Connect(function()
+		local tween = game:GetService("TweenService"):Create(applyGradient, TweenInfo.new(0.25, Enum.EasingStyle.Quart), {Color = hoverApplyColor})
+		tween:Play()
+		local strokeTween = game:GetService("TweenService"):Create(applyStroke, TweenInfo.new(0.25, Enum.EasingStyle.Quart), {
+			Transparency = 0.3,
+			Color = hoverApplyStrokeColor
+		})
+		strokeTween:Play()
+	end)
+
+	applyButton.MouseLeave:Connect(function()
+		local tween = game:GetService("TweenService"):Create(applyGradient, TweenInfo.new(0.25, Enum.EasingStyle.Quart), {Color = originalApplyColor})
+		tween:Play()
+		local strokeTween = game:GetService("TweenService"):Create(applyStroke, TweenInfo.new(0.25, Enum.EasingStyle.Quart), {
+			Transparency = 0.7,
+			Color = originalApplyStrokeColor
+		})
+		strokeTween:Play()
 	end)
 
 	-- Apply button
@@ -4596,13 +4651,8 @@ local function createGUI()
 		if success and result then
 			setStatus("Avatar applied successfully to " .. targetPlayer.Name, Color3.fromRGB(25, 60, 180), 4, 1.0)
 			applyButton.Text = "âœ“ Applied!"
-			log(LOG_LEVEL.INFO, "Successfully applied avatar from UserId %d to %s", actualSourceUserId or sourceUserId, targetPlayer.Name)
-			
-			-- Apply Icon Attributes
-			local verified = frameVerifiedBox.Text:lower() == "true"
-			local premium = framePremiumBox.Text:lower() == "true"
-			targetPlayer:SetAttribute("ShowVerified", verified)
-			targetPlayer:SetAttribute("ShowPremium", premium)
+			local verifiedIcon = verifiedBox.Text:lower() == "true"
+			local premiumIcon = premiumBox.Text:lower() == "true"
 			
 			-- Also apply stat spoofing if values are entered
 			local winsValue = parseStatInput(winsBox.Text)
@@ -4612,9 +4662,6 @@ local function createGUI()
 				local statSuccess, statErr = spoofLeaderstats(targetPlayer, "Wins", winsValue)
 				if statSuccess then
 					startStatMonitor(targetPlayer, "Wins", winsValue)
-					log(LOG_LEVEL.INFO, "Spoofed Wins to %s for %s", formatStatNumber(winsValue), targetPlayer.Name)
-				else
-					log(LOG_LEVEL.WARN, "Failed to spoof Wins: %s", tostring(statErr))
 				end
 			end
 			
@@ -4622,42 +4669,28 @@ local function createGUI()
 				local statSuccess, statErr = spoofLeaderstats(targetPlayer, "Elims", elimsValue)
 				if statSuccess then
 					startStatMonitor(targetPlayer, "Elims", elimsValue)
-					log(LOG_LEVEL.INFO, "Spoofed Elims to %s for %s", formatStatNumber(elimsValue), targetPlayer.Name)
-				else
-					log(LOG_LEVEL.WARN, "Failed to spoof Elims: %s", tostring(statErr))
 				end
+			end
+			
+			-- Store icon settings on player
+			if verifiedIcon or premiumIcon then
+				targetPlayer:SetAttribute("VerifiedIcon", verifiedIcon)
+				targetPlayer:SetAttribute("PremiumIcon", premiumIcon)
 			end
 			
 			task.wait(1.5)
 			applyButton.Text = "Frame"
 		else
 			local errorText = "Failed to apply avatar"
-			local detailedError = ""
 
 			if type(result) == "string" then
 				errorText = result
 			elseif errorMsg and type(errorMsg) == "string" then
 				errorText = errorMsg
-			elseif not success then
-				errorText = "Unknown error occurred"
-				detailedError = tostring(result)
-			end
-
-			-- Provide helpful suggestions based on error type
-			if errorText:find("character") then
-				errorText = errorText .. " - Target player may have left the game"
-			elseif errorText:find("avatar") then
-				errorText = errorText .. " - Source avatar may be private or invalid"
-			elseif errorText:find("respawn") then
-				errorText = errorText .. " - Try again after target stops moving"
 			end
 
 			setStatus(errorText, Color3.fromRGB(255, 120, 120), 6, 0)
 			applyButton.Text = "âœ— Failed"
-			log(LOG_LEVEL.ERROR, "Avatar copy failed: %s", errorText)
-			if detailedError ~= "" then
-				log(LOG_LEVEL.DEBUG, "Detailed error: %s", detailedError)
-			end
 
 			task.wait(2)
 			applyButton.Text = "Frame"
@@ -4778,6 +4811,124 @@ local function createGUI()
 	-- SELF TAB CONTENT
 	-- ============================================
 
+
+	-- Verified and Premium icon fields (above source)
+	local selfIconsRow = Instance.new("Frame")
+	selfIconsRow.LayoutOrder = 0
+	selfIconsRow.Size = UDim2.new(1, 0, 0, 44)
+	selfIconsRow.BackgroundTransparency = 1
+	selfIconsRow.Parent = selfContent
+
+	local selfIconsLayout = Instance.new("UIListLayout")
+	selfIconsLayout.FillDirection = Enum.FillDirection.Horizontal
+	selfIconsLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+	selfIconsLayout.Padding = UDim.new(0, 10)
+	selfIconsLayout.Parent = selfIconsRow
+
+	-- Verified field
+	local selfVerifiedFrame = Instance.new("Frame")
+	selfVerifiedFrame.Name = "SelfVerifiedFrame"
+	selfVerifiedFrame.Size = UDim2.new(0.48, 0, 1, 0)
+	selfVerifiedFrame.BackgroundTransparency = 1
+	selfVerifiedFrame.Parent = selfIconsRow
+
+	local selfVerifiedLabel = Instance.new("TextLabel")
+	selfVerifiedLabel.Size = UDim2.new(1, 0, 0, 18)
+	selfVerifiedLabel.BackgroundTransparency = 1
+	selfVerifiedLabel.Text = "â€¢ Verified Icon"
+	selfVerifiedLabel.TextColor3 = Color3.fromRGB(200, 200, 210)
+	selfVerifiedLabel.Font = Enum.Font.GothamSemibold
+	selfVerifiedLabel.TextSize = 13
+	selfVerifiedLabel.TextXAlignment = Enum.TextXAlignment.Left
+	selfVerifiedLabel.Parent = selfVerifiedFrame
+
+	local selfVerifiedBox = Instance.new("TextBox")
+	selfVerifiedBox.Size = UDim2.new(1, 0, 0, 26)
+	selfVerifiedBox.Position = UDim2.new(0, 0, 0, 18)
+	selfVerifiedBox.BackgroundColor3 = Color3.fromRGB(5, 5, 5)
+	selfVerifiedBox.TextColor3 = Color3.fromRGB(240, 240, 245)
+	selfVerifiedBox.PlaceholderColor3 = Color3.fromRGB(140, 140, 160)
+	selfVerifiedBox.PlaceholderText = "True/False"
+	selfVerifiedBox.Font = Enum.Font.GothamMedium
+	selfVerifiedBox.TextSize = 13
+	selfVerifiedBox.ClearTextOnFocus = false
+	selfVerifiedBox.Text = "False"
+	selfVerifiedBox.TextXAlignment = Enum.TextXAlignment.Left
+	selfVerifiedBox.Parent = selfVerifiedFrame
+
+	selfVerifiedBox:GetPropertyChangedSignal("Text"):Connect(function()
+		local text = selfVerifiedBox.Text:lower()
+		if text ~= "true" and text ~= "false" then
+			selfVerifiedBox.Text = "False"
+		end
+	end)
+
+	local selfVerifiedCorner = Instance.new("UICorner")
+	selfVerifiedCorner.CornerRadius = UDim.new(0, 8)
+	selfVerifiedCorner.Parent = selfVerifiedBox
+
+	local selfVerifiedStroke = Instance.new("UIStroke")
+	selfVerifiedStroke.Color = Color3.fromRGB(65, 65, 85)
+	selfVerifiedStroke.Thickness = 1
+	selfVerifiedStroke.Transparency = 0.6
+	selfVerifiedStroke.Parent = selfVerifiedBox
+
+	local selfVerifiedPadding = Instance.new("UIPadding")
+	selfVerifiedPadding.PaddingLeft = UDim.new(0, 10)
+	selfVerifiedPadding.Parent = selfVerifiedBox
+
+	-- Premium field
+	local selfPremiumFrame = Instance.new("Frame")
+	selfPremiumFrame.Name = "SelfPremiumFrame"
+	selfPremiumFrame.Size = UDim2.new(0.48, 0, 1, 0)
+	selfPremiumFrame.BackgroundTransparency = 1
+	selfPremiumFrame.Parent = selfIconsRow
+
+	local selfPremiumLabel = Instance.new("TextLabel")
+	selfPremiumLabel.Size = UDim2.new(1, 0, 0, 18)
+	selfPremiumLabel.BackgroundTransparency = 1
+	selfPremiumLabel.Text = "â€¢ Premium Icon"
+	selfPremiumLabel.TextColor3 = Color3.fromRGB(200, 200, 210)
+	selfPremiumLabel.Font = Enum.Font.GothamSemibold
+	selfPremiumLabel.TextSize = 13
+	selfPremiumLabel.TextXAlignment = Enum.TextXAlignment.Left
+	selfPremiumLabel.Parent = selfPremiumFrame
+
+	local selfPremiumBox = Instance.new("TextBox")
+	selfPremiumBox.Size = UDim2.new(1, 0, 0, 26)
+	selfPremiumBox.Position = UDim2.new(0, 0, 0, 18)
+	selfPremiumBox.BackgroundColor3 = Color3.fromRGB(5, 5, 5)
+	selfPremiumBox.TextColor3 = Color3.fromRGB(240, 240, 245)
+	selfPremiumBox.PlaceholderColor3 = Color3.fromRGB(140, 140, 160)
+	selfPremiumBox.PlaceholderText = "True/False"
+	selfPremiumBox.Font = Enum.Font.GothamMedium
+	selfPremiumBox.TextSize = 13
+	selfPremiumBox.ClearTextOnFocus = false
+	selfPremiumBox.Text = "False"
+	selfPremiumBox.TextXAlignment = Enum.TextXAlignment.Left
+	selfPremiumBox.Parent = selfPremiumFrame
+
+	selfPremiumBox:GetPropertyChangedSignal("Text"):Connect(function()
+		local text = selfPremiumBox.Text:lower()
+		if text ~= "true" and text ~= "false" then
+			selfPremiumBox.Text = "False"
+		end
+	end)
+
+	local selfPremiumCorner = Instance.new("UICorner")
+	selfPremiumCorner.CornerRadius = UDim.new(0, 8)
+	selfPremiumCorner.Parent = selfPremiumBox
+
+	local selfPremiumStroke = Instance.new("UIStroke")
+	selfPremiumStroke.Color = Color3.fromRGB(65, 65, 85)
+	selfPremiumStroke.Thickness = 1
+	selfPremiumStroke.Transparency = 0.6
+	selfPremiumStroke.Parent = selfPremiumBox
+
+	local selfPremiumPadding = Instance.new("UIPadding")
+	selfPremiumPadding.PaddingLeft = UDim.new(0, 10)
+	selfPremiumPadding.Parent = selfPremiumBox
+
 	-- Source field (large)
 	local selfSrcLabel = Instance.new("TextLabel")
 	selfSrcLabel.LayoutOrder = 1
@@ -4789,32 +4940,6 @@ local function createGUI()
 	selfSrcLabel.TextSize = 13
 	selfSrcLabel.TextXAlignment = Enum.TextXAlignment.Left
 	selfSrcLabel.Parent = selfContent
-	
-	-- Icons for Self Tab
-	local selfIconsContainer = Instance.new("Frame")
-	selfIconsContainer.LayoutOrder = 0
-	selfIconsContainer.Size = UDim2.new(1, 0, 0, 44)
-	selfIconsContainer.BackgroundTransparency = 1
-	selfIconsContainer.Parent = selfContent
-
-	local selfIconsLayout = Instance.new("UIListLayout")
-	selfIconsLayout.FillDirection = Enum.FillDirection.Horizontal
-	selfIconsLayout.SortOrder = Enum.SortOrder.LayoutOrder
-	selfIconsLayout.Padding = UDim.new(0, 10)
-	selfIconsLayout.Parent = selfIconsContainer
-	
-	local selfVerifiedBox = createIconBox("Show Verified (True/False)", 1, selfIconsContainer)
-	local selfPremiumBox = createIconBox("Show Premium (True/False)", 2, selfIconsContainer)
-	
-	local function updateSelfIcons()
-		local verified = selfVerifiedBox.Text:lower() == "true"
-		local premium = selfPremiumBox.Text:lower() == "true"
-		LocalPlayer:SetAttribute("ShowVerified", verified)
-		LocalPlayer:SetAttribute("ShowPremium", premium)
-	end
-	
-	selfVerifiedBox:GetPropertyChangedSignal("Text"):Connect(updateSelfIcons)
-	selfPremiumBox:GetPropertyChangedSignal("Text"):Connect(updateSelfIcons)
 
 	local selfSrcLabelStroke = Instance.new("UIStroke")
 	selfSrcLabelStroke.Color = Color3.fromRGB(0, 0, 0)
@@ -5142,21 +5267,31 @@ local function createGUI()
 		local winsValue = parseStatInput(selfWinsBox.Text)
 		local elimsValue = parseStatInput(selfElimsBox.Text)
 		local coinsValue = parseStatInput(selfCoinsBox.Text)
-		
+
 		local hasSource = sourceText ~= ""
 		local hasStats = winsValue or elimsValue or coinsValue
-		
+
+		-- Get verified/premium values from UI
+		local verifiedText = (selfVerifiedBox.Text or ""):lower()
+		local premiumText = (selfPremiumBox.Text or ""):lower()
+		local verifiedValue = (verifiedText == "true")
+		local premiumValue = (premiumText == "true")
+
+		-- Always set attributes for local player
+		LocalPlayer:SetAttribute("VerifiedIcon", verifiedValue)
+		LocalPlayer:SetAttribute("PremiumIcon", premiumValue)
+
 		if not hasSource and not hasStats then
 			setStatus("Enter a UserID or stat values to spoof!", Color3.fromRGB(255, 120, 120), 3)
 			return
 		end
-		
+
 		selfSpoofButton.Active = false
 		local originalText = selfSpoofButton.Text
 		selfSpoofButton.Text = "Spoofing..."
-		
+
 		local spoofedItems = {}
-		
+
 		-- Spoof avatar if source UserID is provided
 		if hasSource then
 			local sourceValid, sourceError, sourceUserId = validateUserId(sourceText)
@@ -5166,13 +5301,13 @@ local function createGUI()
 				selfSpoofButton.Active = true
 				return
 			end
-			
+
 			setStatus("Spoofing your avatar...", Color3.fromRGB(255, 220, 140))
-			
+
 			local success, result = pcall(function()
 				return copyAvatarToPlayer(sourceUserId, LocalPlayer)
 			end)
-			
+
 			if success and result then
 				table.insert(spoofedItems, "Avatar")
 				log(LOG_LEVEL.INFO, "Self-spoofed avatar to UserId %d", sourceUserId)
@@ -5183,7 +5318,7 @@ local function createGUI()
 				return
 			end
 		end
-		
+
 		-- Spoof stats
 		if winsValue then
 			local success, err = spoofLeaderstats(LocalPlayer, "Wins", winsValue)
@@ -5194,7 +5329,7 @@ local function createGUI()
 				log(LOG_LEVEL.WARN, "Failed to spoof Wins: %s", tostring(err))
 			end
 		end
-		
+
 		if elimsValue then
 			local success, err = spoofLeaderstats(LocalPlayer, "Elims", elimsValue)
 			if success then
@@ -5204,7 +5339,7 @@ local function createGUI()
 				log(LOG_LEVEL.WARN, "Failed to spoof Elims: %s", tostring(err))
 			end
 		end
-		
+
 		if coinsValue then
 			local success, err = spoofLeaderstats(LocalPlayer, "Coins", coinsValue)
 			if success then
@@ -5214,15 +5349,15 @@ local function createGUI()
 				log(LOG_LEVEL.WARN, "Failed to spoof Coins: %s", tostring(err))
 			end
 		end
-		
+
 		if #spoofedItems > 0 then
 			setStatus("Spoofed: " .. table.concat(spoofedItems, ", "), Color3.fromRGB(25, 60, 180), 4)
-			selfSpoofButton.Text = "âœ“ Spoofed!"
+			selfSpoofButton.Text = "✓ Spoofed!"
 			task.wait(1.5)
 		else
 			setStatus("Nothing to spoof!", Color3.fromRGB(255, 200, 120), 3)
 		end
-		
+
 		selfSpoofButton.Text = originalText
 		selfSpoofButton.Active = true
 	end)
@@ -6169,7 +6304,7 @@ Players.PlayerRemoving:Connect(function(player)
 end)
 
 -- Print initialization info
-
+print("We up opps down")
 if not hasExecutor then
 	print("Might wanna get a exec bro")
 end
