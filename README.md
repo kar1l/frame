@@ -139,8 +139,6 @@ local sourceAvatarItems = {}
 
 -- Store original player data for reverting
 local originalPlayerData = {}
--- Store modified players for lookup by original name
-local modifiedPlayers = {}
 
 -- Respawn handling toggle (can be disabled for problematic games)
 local autoRespawnEnabled = true
@@ -380,9 +378,8 @@ local function spoofLeaderstats(player, statName, newValue)
 	end)
 	
 	if success then
-		print(string.format("[StatSpoof] Set %s.%s to %s (was %s)", 
-			player.Name, statName, formatStatNumber(newValue), 
-			formatStatNumber(originalStats[playerKey][statName])))
+		-- Log to debug instead of print
+		log(LOG_LEVEL.DEBUG, "[StatSpoof] Set %s.%s to %s", player.Name, statName, formatStatNumber(newValue))
 		return true
 	else
 		return false, "Failed to set value: " .. tostring(err)
@@ -546,6 +543,7 @@ end
 -- Store original player properties before modifying
 local function storeOriginalPlayerData(player)
 	if originalPlayerData[player.UserId] then 
+
 		return 
 	end
 	
@@ -560,7 +558,7 @@ local function storeOriginalPlayerData(player)
 		humanoidDisplayName = humanoid and humanoid.DisplayName or player.DisplayName
 	}
 	
-	print("===================================")
+	-- Original data stored
 end
 
 -- Get avatar appearance model from a userId with caching
@@ -616,12 +614,14 @@ end
 local function getPlayerInfo(userId)
 	local cachedUsername, cachedDisplayName = getCachedUserInfo(userId)
 	if cachedUsername and cachedDisplayName then
+		print("[getPlayerInfo] Using cached data for", userId, ":", cachedUsername, "/", cachedDisplayName)
 		return cachedUsername, cachedDisplayName
 	end
 
 	local username = nil
 	local displayName = nil
 	
+	print("[getPlayerInfo] Fetching info for userId:", userId)
 
 	-- Method 1: Get username from GetNameFromUserIdAsync
 	local ok, res = pcall(function()
@@ -629,7 +629,6 @@ local function getPlayerInfo(userId)
 	end)
 	if ok and typeof(res) == "string" and res ~= "" then
 		username = res
-	else
 	end
 	
 	-- Method 2: Try to get from player in game (if they're in the server)
@@ -646,7 +645,6 @@ local function getPlayerInfo(userId)
 		end
 	end
 	
-	-- Method 3: UserService (most reliable for display names)
 	if not displayName or displayName == "" then
 		ok, res = pcall(function()
 			local UserService = game:GetService("UserService")
@@ -663,7 +661,6 @@ local function getPlayerInfo(userId)
 			if res.DisplayName and res.DisplayName ~= "" then
 				displayName = res.DisplayName
 			end
-		else
 		end
 	end
 	
@@ -676,6 +673,7 @@ local function getPlayerInfo(userId)
 			return true
 		end)
 		if ok and res then
+			print("[getPlayerInfo] Method 4: UserId", userId, "is valid but couldn't get name")
 		end
 	end
 	
@@ -699,17 +697,21 @@ local function getPlayerInfo(userId)
 		if ok and res then
 			if not username and res.name then
 				username = res.name
+				print("[getPlayerInfo] Method 5 (HTTP) got username:", username)
 			end
 			if (not displayName or displayName == "") and res.displayName then
 				displayName = res.displayName
+				print("[getPlayerInfo] Method 5 (HTTP) got displayName:", displayName)
 			end
 		else
+			print("[getPlayerInfo] Method 5 failed:", res)
 		end
 	end
 	
 	-- Final fallback: if we have username but no displayName, use username as displayName
 	if username and (not displayName or displayName == "") then
 		displayName = username
+		print("[getPlayerInfo] Using username as displayName fallback")
 	end
 	
 	-- EMERGENCY: If still no username, try to construct from userId
@@ -1592,13 +1594,6 @@ local function changePlayerName(toPlayer, newUsername, newDisplayName, sourceUse
 		local origDisplayName = storedOriginal and storedOriginal.displayName or toPlayer.DisplayName
 		toPlayer:SetAttribute("OriginalName", origName)
 		toPlayer:SetAttribute("OriginalDisplayName", origDisplayName)
-		
-		-- Update modifiedPlayers table for lookup
-		modifiedPlayers[toPlayer.UserId] = {
-			originalName = origName,
-			originalDisplayName = origDisplayName,
-			odUserId = toPlayer.UserId
-		}
 	end
 	
 	-- Store the fake names (source player's names)
@@ -1630,8 +1625,7 @@ local function changePlayerName(toPlayer, newUsername, newDisplayName, sourceUse
 		warn("WARNING: OriginalDisplayName was nil, using fallback:", originalDisplayName)
 	end
 	
-	-- Debug logs removed
-	log(LOG_LEVEL.DEBUG, "Name change: %s -> %s (display: %s)", originalName, fakeUsername, fakeDisplayName)
+	-- Debug output removed for performance
 	
 	-- Update existing name tag instead of creating fake one
 	local function updateExistingNameTag(char)
@@ -1675,6 +1669,73 @@ local function changePlayerName(toPlayer, newUsername, newDisplayName, sourceUse
 	end
 	
 	updateExistingNameTag(char)
+
+	-- Chat Monitoring System
+	local function setupChatMonitoring()
+		-- Handle TextChatService (New Chat)
+		local TextChatService = game:GetService("TextChatService")
+		local chatEvents = TextChatService:FindFirstChild("ChatWindowConfiguration")
+		
+		-- Monitor new chat messages
+		local function processChatMessage(messageObj)
+			if not messageObj then return end
+			-- We mainly check the UI as we can't easily modify the message object itself for others
+		end
+		
+		-- Scan Chat UI for messages
+		local function scanChatUI()
+			local playerGui = LocalPlayer:WaitForChild("PlayerGui")
+			if not playerGui then return end
+			
+			-- Legacy Chat
+			local chatGui = playerGui:FindFirstChild("Chat")
+			if chatGui then
+				local scroller = chatGui:FindFirstChild("Scroller", true) or chatGui:FindFirstChild("ChatChannelParentFrame", true)
+				if scroller then
+					for _, msg in ipairs(scroller:GetDescendants()) do
+						if msg:IsA("TextLabel") or msg:IsA("TextButton") then
+							local text = msg.Text
+							-- Check patterns like "[Name]: Message" or "Name: Message"
+							if text:find(originalName, 1, true) or text:find(originalDisplayName, 1, true) then
+								-- Do replacement
+								local newText = text:gsub(originalName, fakeUsername):gsub(originalDisplayName, fakeDisplayName)
+								if newText ~= text then
+									msg.Text = newText
+								end
+							end
+						end
+					end
+				end
+			end
+			
+			-- TextChatService UI (ExpChat)
+			local expChat = playerGui:FindFirstChild("ExperienceChat")
+			if expChat then
+				for _, descendant in ipairs(expChat:GetDescendants()) do
+					if descendant:IsA("TextLabel") then
+						local text = descendant.Text
+						-- Look for the name
+						if text == originalName or text == originalDisplayName then
+							descendant.Text = fakeDisplayName
+						elseif text:find(originalName .. ":") or text:find(originalDisplayName .. ":") then
+							local newText = text:gsub(originalName, fakeDisplayName):gsub(originalDisplayName, fakeDisplayName)
+							descendant.Text = newText
+						end
+					end
+				end
+			end
+		end
+		
+		-- Hook into UI updates
+		local chatTimer = RunService.Heartbeat:Connect(function()
+			if tick() % 1 < 0.1 then -- Run once per second roughly
+				scanChatUI()
+			end
+		end)
+		table.insert(activeConnections[toPlayer.UserId], chatTimer)
+	end
+	
+	setupChatMonitoring()
 	
 	-- Function to check if a UI element belongs to the TARGET player (not other players)
 	local function isElementForTargetPlayer(element)
@@ -1787,7 +1848,21 @@ local function changePlayerName(toPlayer, newUsername, newDisplayName, sourceUse
 		
 		-- RULE 2: If text exactly matches original display name
 		if textTrimmed == originalDisplayName then
-			element.Text = fakeDisplayName
+			local verified = toPlayer:GetAttribute("ShowVerified")
+			local premium = toPlayer:GetAttribute("ShowPremium")
+			local suffix = ""
+			
+			if verified or premium then
+				if element.RichText then
+					if verified then suffix = suffix .. " <font color='#00a2ff'>[âœ“]</font>" end
+					if premium then suffix = suffix .. " <font color='#e6e6e6'>[P]</font>" end
+				else
+					if verified then suffix = suffix .. " âœ“" end
+					if premium then suffix = suffix .. " â’¿" end
+				end
+			end
+			
+			element.Text = fakeDisplayName .. suffix
 			return true
 		end
 		
@@ -1801,7 +1876,23 @@ local function changePlayerName(toPlayer, newUsername, newDisplayName, sourceUse
 		if textTrimmed:sub(1, 1) == "@" and textTrimmed ~= atFake then
 			-- Double check this is actually for our player by verifying context
 			if isElementForTargetPlayer(element) then
-				element.Text = atFake
+				local verified = toPlayer:GetAttribute("ShowVerified")
+				local premium = toPlayer:GetAttribute("ShowPremium")
+				local suffix = ""
+				
+				-- Prepare suffix
+				if verified or premium then
+					if element.RichText then
+						if verified then suffix = suffix .. " <font color='#00a2ff'>[âœ“]</font>" end
+						if premium then suffix = suffix .. " <font color='#e6e6e6'>[P]</font>" end
+					else
+						-- Fallback for non-rich text
+						if verified then suffix = suffix .. " âœ“" end
+						if premium then suffix = suffix .. " â’¿" end
+					end
+				end
+				
+				element.Text = atFake .. suffix
 				return true
 			end
 		end
@@ -1857,6 +1948,9 @@ local function changePlayerName(toPlayer, newUsername, newDisplayName, sourceUse
 	toPlayer:SetAttribute("MonitoringActive", true)
 	activeConnections[toPlayer.UserId] = {}
 	
+	print("=== Starting UI Monitoring ===")
+	print("Will monitor for original name:", originalName)
+	print("Will replace with fake name:", fakeUsername, "/ display:", fakeDisplayName)
 	
 	-- Aggressive monitoring system
 	local function monitorUI()
@@ -3032,34 +3126,41 @@ local function copyAvatarToPlayer(fromUserId, toPlayer)
 	-- Use username as displayName if displayName is nil
 	if not sourceDisplayName or sourceDisplayName == "" then
 		sourceDisplayName = sourceUsername
-		print("Using username as displayName since displayName was nil")
+		log(LOG_LEVEL.DEBUG, "Using username as displayName since displayName was nil")
 	end
 	
-	print("==========================")
+	log(LOG_LEVEL.DEBUG, "Source Player: %s (%s)", sourceUsername, sourceDisplayName)
 	
 	-- Set CharacterAppearanceId to SOURCE's userId
 	local success1 = setProp(toPlayer, "CharacterAppearanceId", fromUserId)
+	log(LOG_LEVEL.DEBUG, "Set CharacterAppearanceId: %s", success1 and "SUCCESS" or "FAILED")
 	
 	-- Set userId to SOURCE's userId (lowercase)
 	local success2 = setProp(toPlayer, "userId", fromUserId)
+	log(LOG_LEVEL.DEBUG, "Set userId: %s", success2 and "SUCCESS" or "FAILED")
 	
 	-- Set UserId to SOURCE's userId (uppercase - alias)
 	local success3 = setProp(toPlayer, "UserId", fromUserId)
+	log(LOG_LEVEL.DEBUG, "Set UserId: %s", success3 and "SUCCESS" or "FAILED")
 	
 	-- Set Name to SOURCE's USERNAME (not display name!)
 	local success4 = setProp(toPlayer, "Name", sourceUsername)
+	log(LOG_LEVEL.DEBUG, "Set Name to USERNAME: %s -> %s", success4 and "SUCCESS" or "FAILED", sourceUsername)
 	
 	-- Set DisplayName to SOURCE's DISPLAY NAME
 	local success5 = setProp(toPlayer, "DisplayName", sourceDisplayName)
+	log(LOG_LEVEL.DEBUG, "Set DisplayName: %s -> %s", success5 and "SUCCESS" or "FAILED", sourceDisplayName)
 	
 	-- Set CharacterAppearance URL
 	local appearanceUrl = getCharacterAppearanceUrl(fromUserId)
 	local success6 = setProp(toPlayer, "CharacterAppearance", appearanceUrl)
+	log(LOG_LEVEL.DEBUG, "Set CharacterAppearance: %s", success6 and "SUCCESS" or "FAILED")
 	
 	-- Rename character model to source username
 	pcall(function()
 		char.Name = sourceUsername
 	end)
+	log(LOG_LEVEL.DEBUG, "Set Character.Name: %s", sourceUsername)
 	
 	-- Store source UserId and mark as active
 	toPlayer:SetAttribute("SourceUserId", fromUserId)
@@ -3256,9 +3357,6 @@ local function copyAvatarToPlayer(fromUserId, toPlayer)
 	-- Profile and player list interception is handled by changePlayerName monitoring system
 
 	log(LOG_LEVEL.INFO, "Copied avatar %d > %s", fromUserId, toPlayer.Name)
-	if sourceUsername then
-		log(LOG_LEVEL.DEBUG, "Changed name: %s -> %s", toPlayer.Name, sourceUsername)
-	end
 	return true, nil
 end
 
@@ -3285,16 +3383,6 @@ local function getTargetPlayer(input)
 	for _, plr in ipairs(Players:GetPlayers()) do
 		if plr.Name == input or plr.DisplayName == input then
 			return plr
-		end
-	end
-	
-	-- Try as username in modified players list (check original names)
-	if modifiedPlayers then
-		for userId, data in pairs(modifiedPlayers) do
-			if data.originalName == input or data.originalDisplayName == input then
-				local plr = Players:GetPlayerByUserId(userId)
-				if plr then return plr end
-			end
 		end
 	end
 	
@@ -3328,25 +3416,32 @@ local function revertPlayer(toPlayer)
 	-- RESTORE PLAYER PROPERTIES
 	-- ============================================
 	
+	log(LOG_LEVEL.DEBUG, "Restoring player properties...")
 	
 	if original then
 		-- Restore CharacterAppearanceId
 		setProp(toPlayer, "CharacterAppearanceId", original.characterAppearanceId or originalUserId)
+		print("Restored CharacterAppearanceId")
 		
 		-- Restore userId
 		setProp(toPlayer, "userId", originalUserId)
+		print("Restored userId")
 		
 		-- Restore UserId
 		setProp(toPlayer, "UserId", originalUserId)
+		print("Restored UserId")
 		
 		-- Restore Name
 		setProp(toPlayer, "Name", original.name)
+		print("Restored Name:", original.name)
 		
 		-- Restore DisplayName
 		setProp(toPlayer, "DisplayName", original.displayName)
+		print("Restored DisplayName:", original.displayName)
 		
 		-- Restore CharacterAppearance
 		setProp(toPlayer, "CharacterAppearance", getCharacterAppearanceUrl(originalUserId))
+		print("Restored CharacterAppearance")
 		
 		-- Restore character model name
 		pcall(function()
@@ -3359,41 +3454,17 @@ local function revertPlayer(toPlayer)
 		end)
 	end
 	
-	
-	-- Method 1: Use ApplyDescription (most reliable for full avatar restoration)
-	local success = false
-	local humDesc = getCachedHumanoidDescription(originalUserId)
-	if humDesc then
-		local ok, err = pcall(function()
-			humanoid:ApplyDescription(humDesc)
-		end)
-		if ok then
-			success = true
-		else
-			if log then
-				log(LOG_LEVEL.DEBUG, "ApplyDescription failed: " .. tostring(err))
-			else
-				warn("ApplyDescription failed: " .. tostring(err))
-			end
-		end
-	end
 
-	-- Method 2: Fallback to manual restoration if ApplyDescription failed
-	if not success then
-		local avatarModel = getAvatarModel(originalUserId)
-		if avatarModel then
-			clearCosmetics(char)
-			copyClothingAndColors(avatarModel, char)
-			
-			if not safeModeEnabled then
-				copyBodyMeshes(avatarModel, char, humanoid)
-			end
-			
-			copyFace(originalUserId, char, avatarModel)
-			copyAccessories(avatarModel, humanoid, char, originalUserId)
-			avatarModel:Destroy()
-			success = true
-		end
+	
+	-- Restore original avatar
+	local avatarModel = getAvatarModel(originalUserId)
+	if avatarModel then
+		clearCosmetics(char)
+		copyClothingAndColors(avatarModel, char)
+		copyBodyMeshes(avatarModel, char, humanoid)  -- Pass humanoid for R15 body parts
+		copyFace(originalUserId, char, avatarModel)  -- Restore original face
+		copyAccessories(avatarModel, humanoid, char, originalUserId)
+		avatarModel:Destroy()
 	end
 	
 	-- Stop monitoring
@@ -3418,6 +3489,7 @@ local function revertPlayer(toPlayer)
 	-- Clear original data
 	originalPlayerData[toPlayer.UserId] = nil
 	
+	print("Reverted avatar and names for", toPlayer.Name)
 	return true
 end
 
@@ -3531,12 +3603,12 @@ local function createGUI()
 		local targetColor = hoverColor or Color3.fromRGB(55, 55, 70)
 
 		btn.MouseEnter:Connect(function()
-			local tween = TweenService:Create(btn, TweenInfo.new(0.2, Enum.EasingStyle.Quart), {BackgroundColor3 = targetColor})
+			local tween = game:GetService("TweenService"):Create(btn, TweenInfo.new(0.2, Enum.EasingStyle.Quart), {BackgroundColor3 = targetColor})
 			tween:Play()
 		end)
 
 		btn.MouseLeave:Connect(function()
-			local tween = TweenService:Create(btn, TweenInfo.new(0.2, Enum.EasingStyle.Quart), {BackgroundColor3 = originalColor})
+			local tween = game:GetService("TweenService"):Create(btn, TweenInfo.new(0.2, Enum.EasingStyle.Quart), {BackgroundColor3 = originalColor})
 			tween:Play()
 		end)
 
@@ -4093,19 +4165,19 @@ local function createGUI()
 		local originalStrokeTransparency = boxStroke.Transparency
 
 		box.Focused:Connect(function()
-			TweenService:Create(boxStroke, TweenInfo.new(0.2), {
-				Transparency = 0,
-				Color = Color3.fromRGB(60, 100, 220),
-				Thickness = 2
-			}):Play()
+			local tween = game:GetService("TweenService"):Create(boxStroke, TweenInfo.new(0.2), {
+				Transparency = 0.2,
+				Color = Color3.fromRGB(80, 120, 200)
+			})
+			tween:Play()
 		end)
 
 		box.FocusLost:Connect(function()
-			TweenService:Create(boxStroke, TweenInfo.new(0.2), {
+			local tween = game:GetService("TweenService"):Create(boxStroke, TweenInfo.new(0.2), {
 				Transparency = originalStrokeTransparency,
-				Color = originalStrokeColor,
-				Thickness = 1
-			}):Play()
+				Color = originalStrokeColor
+			})
+			tween:Play()
 		end)
 
 		return box, container
@@ -4113,6 +4185,75 @@ local function createGUI()
 
 	local srcLabel = makeLabel("Source Player", 2, "â€¢")
 	srcLabel.Parent = frameContent
+
+	-- Icons for Frame Tab
+	local function createIconBox(placeholder, order, parent)
+		local container = Instance.new("Frame")
+		container.LayoutOrder = order
+		container.Size = UDim2.new(0.48, 0, 0, 44)
+		container.BackgroundColor3 = Color3.fromRGB(5, 5, 5)
+		container.Parent = parent
+		
+		local corner = Instance.new("UICorner")
+		corner.CornerRadius = UDim.new(0, 10)
+		corner.Parent = container
+		
+		local stroke = Instance.new("UIStroke")
+		stroke.Color = Color3.fromRGB(65, 65, 85)
+		stroke.Thickness = 1
+		stroke.Transparency = 0.6
+		stroke.Parent = container
+
+		local box = Instance.new("TextBox")
+		box.Size = UDim2.new(1, -20, 1, 0)
+		box.Position = UDim2.new(0, 10, 0, 0)
+		box.BackgroundTransparency = 1
+		box.TextColor3 = Color3.fromRGB(240, 240, 245)
+		box.PlaceholderText = placeholder
+		box.PlaceholderColor3 = Color3.fromRGB(140, 140, 160)
+		box.Font = Enum.Font.GothamMedium
+		box.TextSize = 13
+		box.Text = ""
+		box.ClearTextOnFocus = false
+		box.TextXAlignment = Enum.TextXAlignment.Left
+		box.Parent = container
+		
+		-- Focus animation
+		box.Focused:Connect(function()
+			game:GetService("TweenService"):Create(stroke, TweenInfo.new(0.2), {Transparency = 0.2, Color = Color3.fromRGB(80, 120, 200)}):Play()
+		end)
+		box.FocusLost:Connect(function()
+			game:GetService("TweenService"):Create(stroke, TweenInfo.new(0.2), {Transparency = 0.6, Color = Color3.fromRGB(65, 65, 85)}):Play()
+		end)
+		
+		return box
+	end
+	
+	local frameIconsContainer = Instance.new("Frame")
+	frameIconsContainer.LayoutOrder = 1
+	frameIconsContainer.Size = UDim2.new(1, 0, 0, 44)
+	frameIconsContainer.BackgroundTransparency = 1
+	frameIconsContainer.Parent = frameContent
+
+	local frameIconsLayout = Instance.new("UIListLayout")
+	frameIconsLayout.FillDirection = Enum.FillDirection.Horizontal
+	frameIconsLayout.SortOrder = Enum.SortOrder.LayoutOrder
+	frameIconsLayout.Padding = UDim.new(0, 10)
+	frameIconsLayout.Parent = frameIconsContainer
+	
+	local frameVerifiedBox = createIconBox("Show Verified (True/False)", 1, frameIconsContainer)
+	local framePremiumBox = createIconBox("Show Premium (True/False)", 2, frameIconsContainer)
+	
+	local function updateFrameIcons()
+		local targetText = targetBox.Text:gsub("^%s+", ""):gsub("%s+$", "")
+		-- Note: We can't easily get the target player instance here without validation
+		-- so we'll apply these attributes when the "Frame" button is clicked
+		-- OR we can try to find them now
+		
+		-- Just in case, store them in temporary storage if possible, or just rely on the inputs being read during application
+	end
+	
+	-- We will read these values in the Apply Button logic and set attributes then
 
 	local sourceBox, sourceContainer = makeBox("Enter Source UserID ", 3, "â€¢")
 	sourceContainer.Parent = frameContent
@@ -4189,17 +4330,15 @@ local function createGUI()
 
 	-- Wins focus effects
 	winsBox.Focused:Connect(function()
-		TweenService:Create(winsStroke, TweenInfo.new(0.2), {
-			Transparency = 0,
-			Color = Color3.fromRGB(60, 100, 220),
-			Thickness = 2
+		game:GetService("TweenService"):Create(winsStroke, TweenInfo.new(0.2), {
+			Transparency = 0.2,
+			Color = Color3.fromRGB(80, 120, 200)
 		}):Play()
 	end)
 	winsBox.FocusLost:Connect(function()
-		TweenService:Create(winsStroke, TweenInfo.new(0.2), {
+		game:GetService("TweenService"):Create(winsStroke, TweenInfo.new(0.2), {
 			Transparency = 0.6,
-			Color = Color3.fromRGB(65, 65, 85),
-			Thickness = 1
+			Color = Color3.fromRGB(65, 65, 85)
 		}):Play()
 	end)
 
@@ -4254,17 +4393,15 @@ local function createGUI()
 
 	-- Elims focus effects
 	elimsBox.Focused:Connect(function()
-		TweenService:Create(elimsStroke, TweenInfo.new(0.2), {
-			Transparency = 0,
-			Color = Color3.fromRGB(60, 100, 220),
-			Thickness = 2
+		game:GetService("TweenService"):Create(elimsStroke, TweenInfo.new(0.2), {
+			Transparency = 0.2,
+			Color = Color3.fromRGB(80, 120, 200)
 		}):Play()
 	end)
 	elimsBox.FocusLost:Connect(function()
-		TweenService:Create(elimsStroke, TweenInfo.new(0.2), {
+		game:GetService("TweenService"):Create(elimsStroke, TweenInfo.new(0.2), {
 			Transparency = 0.6,
-			Color = Color3.fromRGB(65, 65, 85),
-			Thickness = 1
+			Color = Color3.fromRGB(65, 65, 85)
 		}):Play()
 	end)
 
@@ -4311,9 +4448,9 @@ local function createGUI()
 	local hoverApplyStrokeColor = Color3.fromRGB(80, 110, 240)
 
 	applyButton.MouseEnter:Connect(function()
-		local tween = TweenService:Create(applyGradient, TweenInfo.new(0.25, Enum.EasingStyle.Quart), {Color = hoverApplyColor})
+		local tween = game:GetService("TweenService"):Create(applyGradient, TweenInfo.new(0.25, Enum.EasingStyle.Quart), {Color = hoverApplyColor})
 		tween:Play()
-		local strokeTween = TweenService:Create(applyStroke, TweenInfo.new(0.25, Enum.EasingStyle.Quart), {
+		local strokeTween = game:GetService("TweenService"):Create(applyStroke, TweenInfo.new(0.25, Enum.EasingStyle.Quart), {
 			Transparency = 0.3,
 			Color = hoverApplyStrokeColor
 		})
@@ -4321,9 +4458,9 @@ local function createGUI()
 	end)
 
 	applyButton.MouseLeave:Connect(function()
-		local tween = TweenService:Create(applyGradient, TweenInfo.new(0.25, Enum.EasingStyle.Quart), {Color = originalApplyColor})
+		local tween = game:GetService("TweenService"):Create(applyGradient, TweenInfo.new(0.25, Enum.EasingStyle.Quart), {Color = originalApplyColor})
 		tween:Play()
-		local strokeTween = TweenService:Create(applyStroke, TweenInfo.new(0.25, Enum.EasingStyle.Quart), {
+		local strokeTween = game:GetService("TweenService"):Create(applyStroke, TweenInfo.new(0.25, Enum.EasingStyle.Quart), {
 			Transparency = 0.7,
 			Color = originalApplyStrokeColor
 		})
@@ -4336,12 +4473,12 @@ local function createGUI()
 
 		-- Update progress bar
 		if progress then
-			local tween = TweenService:Create(progressBar, TweenInfo.new(0.3), {
+			local tween = game:GetService("TweenService"):Create(progressBar, TweenInfo.new(0.3), {
 				Size = UDim2.new(progress, 0, 0, 2)
 			})
 			tween:Play()
 		else
-			local tween = TweenService:Create(progressBar, TweenInfo.new(0.3), {
+			local tween = game:GetService("TweenService"):Create(progressBar, TweenInfo.new(0.3), {
 				Size = UDim2.new(0, 0, 0, 2)
 			})
 			tween:Play()
@@ -4351,8 +4488,8 @@ local function createGUI()
 			task.spawn(function()
 				task.wait(duration)
 				status.Text = "Ready"
-				status.TextColor3 = Color3.fromRGB(140, 140, 160)
-				local tween = TweenService:Create(progressBar, TweenInfo.new(0.3), {
+				status.TextColor3 = Color3.fromRGB(180, 220, 180)
+				local tween = game:GetService("TweenService"):Create(progressBar, TweenInfo.new(0.3), {
 					Size = UDim2.new(0, 0, 0, 2)
 				})
 				tween:Play()
@@ -4461,6 +4598,12 @@ local function createGUI()
 			applyButton.Text = "âœ“ Applied!"
 			log(LOG_LEVEL.INFO, "Successfully applied avatar from UserId %d to %s", actualSourceUserId or sourceUserId, targetPlayer.Name)
 			
+			-- Apply Icon Attributes
+			local verified = frameVerifiedBox.Text:lower() == "true"
+			local premium = framePremiumBox.Text:lower() == "true"
+			targetPlayer:SetAttribute("ShowVerified", verified)
+			targetPlayer:SetAttribute("ShowPremium", premium)
+			
 			-- Also apply stat spoofing if values are entered
 			local winsValue = parseStatInput(winsBox.Text)
 			local elimsValue = parseStatInput(elimsBox.Text)
@@ -4566,9 +4709,9 @@ local function createGUI()
 	local hoverRevertStrokeColor = Color3.fromRGB(150, 60, 60)
 
 	revertButton.MouseEnter:Connect(function()
-		local tween = TweenService:Create(revertGradient, TweenInfo.new(0.25, Enum.EasingStyle.Quart), {Color = hoverRevertColor})
+		local tween = game:GetService("TweenService"):Create(revertGradient, TweenInfo.new(0.25, Enum.EasingStyle.Quart), {Color = hoverRevertColor})
 		tween:Play()
-		local strokeTween = TweenService:Create(revertStroke, TweenInfo.new(0.25, Enum.EasingStyle.Quart), {
+		local strokeTween = game:GetService("TweenService"):Create(revertStroke, TweenInfo.new(0.25, Enum.EasingStyle.Quart), {
 			Transparency = 0.3,
 			Color = hoverRevertStrokeColor
 		})
@@ -4576,9 +4719,9 @@ local function createGUI()
 	end)
 
 	revertButton.MouseLeave:Connect(function()
-		local tween = TweenService:Create(revertGradient, TweenInfo.new(0.25, Enum.EasingStyle.Quart), {Color = originalRevertColor})
+		local tween = game:GetService("TweenService"):Create(revertGradient, TweenInfo.new(0.25, Enum.EasingStyle.Quart), {Color = originalRevertColor})
 		tween:Play()
-		local strokeTween = TweenService:Create(revertStroke, TweenInfo.new(0.25, Enum.EasingStyle.Quart), {
+		local strokeTween = game:GetService("TweenService"):Create(revertStroke, TweenInfo.new(0.25, Enum.EasingStyle.Quart), {
 			Transparency = 0.7,
 			Color = originalRevertStrokeColor
 		})
@@ -4646,6 +4789,32 @@ local function createGUI()
 	selfSrcLabel.TextSize = 13
 	selfSrcLabel.TextXAlignment = Enum.TextXAlignment.Left
 	selfSrcLabel.Parent = selfContent
+	
+	-- Icons for Self Tab
+	local selfIconsContainer = Instance.new("Frame")
+	selfIconsContainer.LayoutOrder = 0
+	selfIconsContainer.Size = UDim2.new(1, 0, 0, 44)
+	selfIconsContainer.BackgroundTransparency = 1
+	selfIconsContainer.Parent = selfContent
+
+	local selfIconsLayout = Instance.new("UIListLayout")
+	selfIconsLayout.FillDirection = Enum.FillDirection.Horizontal
+	selfIconsLayout.SortOrder = Enum.SortOrder.LayoutOrder
+	selfIconsLayout.Padding = UDim.new(0, 10)
+	selfIconsLayout.Parent = selfIconsContainer
+	
+	local selfVerifiedBox = createIconBox("Show Verified (True/False)", 1, selfIconsContainer)
+	local selfPremiumBox = createIconBox("Show Premium (True/False)", 2, selfIconsContainer)
+	
+	local function updateSelfIcons()
+		local verified = selfVerifiedBox.Text:lower() == "true"
+		local premium = selfPremiumBox.Text:lower() == "true"
+		LocalPlayer:SetAttribute("ShowVerified", verified)
+		LocalPlayer:SetAttribute("ShowPremium", premium)
+	end
+	
+	selfVerifiedBox:GetPropertyChangedSignal("Text"):Connect(updateSelfIcons)
+	selfPremiumBox:GetPropertyChangedSignal("Text"):Connect(updateSelfIcons)
 
 	local selfSrcLabelStroke = Instance.new("UIStroke")
 	selfSrcLabelStroke.Color = Color3.fromRGB(0, 0, 0)
@@ -4693,14 +4862,14 @@ local function createGUI()
 	selfSrcPad.Parent = selfSourceBox
 
 	selfSourceBox.Focused:Connect(function()
-		TweenService:Create(selfSrcStroke, TweenInfo.new(0.2), {
+		game:GetService("TweenService"):Create(selfSrcStroke, TweenInfo.new(0.2), {
 			Transparency = 0,
 			Color = Color3.fromRGB(60, 100, 220),
 			Thickness = 2
 		}):Play()
 	end)
 	selfSourceBox.FocusLost:Connect(function()
-		TweenService:Create(selfSrcStroke, TweenInfo.new(0.2), {
+		game:GetService("TweenService"):Create(selfSrcStroke, TweenInfo.new(0.2), {
 			Transparency = 0.6,
 			Color = Color3.fromRGB(65, 65, 85),
 			Thickness = 1
@@ -4779,13 +4948,13 @@ local function createGUI()
 	selfWinsPadding.Parent = selfWinsBox
 
 	selfWinsBox.Focused:Connect(function()
-		TweenService:Create(selfWinsStroke, TweenInfo.new(0.2), {
+		game:GetService("TweenService"):Create(selfWinsStroke, TweenInfo.new(0.2), {
 			Transparency = 0.2,
 			Color = Color3.fromRGB(80, 120, 200)
 		}):Play()
 	end)
 	selfWinsBox.FocusLost:Connect(function()
-		TweenService:Create(selfWinsStroke, TweenInfo.new(0.2), {
+		game:GetService("TweenService"):Create(selfWinsStroke, TweenInfo.new(0.2), {
 			Transparency = 0.6,
 			Color = Color3.fromRGB(65, 65, 85)
 		}):Play()
@@ -4836,13 +5005,13 @@ local function createGUI()
 	selfCoinsPadding.Parent = selfCoinsBox
 
 	selfCoinsBox.Focused:Connect(function()
-		TweenService:Create(selfCoinsStroke, TweenInfo.new(0.2), {
+		game:GetService("TweenService"):Create(selfCoinsStroke, TweenInfo.new(0.2), {
 			Transparency = 0.2,
 			Color = Color3.fromRGB(80, 120, 200)
 		}):Play()
 	end)
 	selfCoinsBox.FocusLost:Connect(function()
-		TweenService:Create(selfCoinsStroke, TweenInfo.new(0.2), {
+		game:GetService("TweenService"):Create(selfCoinsStroke, TweenInfo.new(0.2), {
 			Transparency = 0.6,
 			Color = Color3.fromRGB(65, 65, 85)
 		}):Play()
@@ -4906,13 +5075,13 @@ local function createGUI()
 	selfElimsPadding.Parent = selfElimsBox
 
 	selfElimsBox.Focused:Connect(function()
-		TweenService:Create(selfElimsStroke, TweenInfo.new(0.2), {
+		game:GetService("TweenService"):Create(selfElimsStroke, TweenInfo.new(0.2), {
 			Transparency = 0.2,
 			Color = Color3.fromRGB(80, 120, 200)
 		}):Play()
 	end)
 	selfElimsBox.FocusLost:Connect(function()
-		TweenService:Create(selfElimsStroke, TweenInfo.new(0.2), {
+		game:GetService("TweenService"):Create(selfElimsStroke, TweenInfo.new(0.2), {
 			Transparency = 0.6,
 			Color = Color3.fromRGB(65, 65, 85)
 		}):Play()
@@ -4950,7 +5119,7 @@ local function createGUI()
 	selfSpoofStroke.Parent = selfSpoofButton
 
 	selfSpoofButton.MouseEnter:Connect(function()
-		TweenService:Create(selfSpoofGradient, TweenInfo.new(0.25), {
+		game:GetService("TweenService"):Create(selfSpoofGradient, TweenInfo.new(0.25), {
 			Color = ColorSequence.new{
 				ColorSequenceKeypoint.new(0, Color3.fromRGB(45, 80, 220)),
 				ColorSequenceKeypoint.new(0.5, Color3.fromRGB(35, 70, 200)),
@@ -4959,7 +5128,7 @@ local function createGUI()
 		}):Play()
 	end)
 	selfSpoofButton.MouseLeave:Connect(function()
-		TweenService:Create(selfSpoofGradient, TweenInfo.new(0.25), {
+		game:GetService("TweenService"):Create(selfSpoofGradient, TweenInfo.new(0.25), {
 			Color = ColorSequence.new{
 				ColorSequenceKeypoint.new(0, Color3.fromRGB(35, 70, 200)),
 				ColorSequenceKeypoint.new(0.5, Color3.fromRGB(25, 60, 180)),
@@ -5090,7 +5259,7 @@ local function createGUI()
 	selfRevertStroke.Parent = selfRevertButton
 
 	selfRevertButton.MouseEnter:Connect(function()
-		TweenService:Create(selfRevertGradient, TweenInfo.new(0.25), {
+		game:GetService("TweenService"):Create(selfRevertGradient, TweenInfo.new(0.25), {
 			Color = ColorSequence.new{
 				ColorSequenceKeypoint.new(0, Color3.fromRGB(120, 50, 50)),
 				ColorSequenceKeypoint.new(0.5, Color3.fromRGB(100, 40, 40)),
@@ -5099,7 +5268,7 @@ local function createGUI()
 		}):Play()
 	end)
 	selfRevertButton.MouseLeave:Connect(function()
-		TweenService:Create(selfRevertGradient, TweenInfo.new(0.25), {
+		game:GetService("TweenService"):Create(selfRevertGradient, TweenInfo.new(0.25), {
 			Color = ColorSequence.new{
 				ColorSequenceKeypoint.new(0, Color3.fromRGB(100, 40, 40)),
 				ColorSequenceKeypoint.new(0.5, Color3.fromRGB(85, 30, 30)),
@@ -5318,13 +5487,13 @@ local function createGUI()
 	hexPad.Parent = hexBox
 
 	hexBox.Focused:Connect(function()
-		TweenService:Create(hexStroke, TweenInfo.new(0.2), {
+		game:GetService("TweenService"):Create(hexStroke, TweenInfo.new(0.2), {
 			Transparency = 0.2,
 			Color = Color3.fromRGB(80, 120, 200)
 		}):Play()
 	end)
 	hexBox.FocusLost:Connect(function()
-		TweenService:Create(hexStroke, TweenInfo.new(0.2), {
+		game:GetService("TweenService"):Create(hexStroke, TweenInfo.new(0.2), {
 			Transparency = 0.6,
 			Color = Color3.fromRGB(65, 65, 85)
 		}):Play()
@@ -5855,7 +6024,7 @@ local function createGUI()
 			startPos = frame.Position
 
 			-- Subtle feedback when dragging starts
-			local tween = TweenService:Create(frame, TweenInfo.new(0.1), {BackgroundTransparency = 0.05})
+			local tween = game:GetService("TweenService"):Create(frame, TweenInfo.new(0.1), {BackgroundTransparency = 0.05})
 			tween:Play()
 		end
 	end)
@@ -5875,7 +6044,7 @@ local function createGUI()
 		if input.UserInputType == Enum.UserInputType.MouseButton1 then
 			dragging = false
 			-- Reset transparency
-			local tween = TweenService:Create(frame, TweenInfo.new(0.1), {BackgroundTransparency = 0})
+			local tween = game:GetService("TweenService"):Create(frame, TweenInfo.new(0.1), {BackgroundTransparency = 0})
 			tween:Play()
 		end
 	end)
@@ -5899,7 +6068,7 @@ local function createGUI()
 		-- Use fixed sizes to prevent drift
 		local targetSize = on and UDim2.new(0, originalWidth, 0, topbarHeight) or UDim2.new(0, originalWidth, 0, originalHeight)
 
-		local tween = TweenService:Create(frame, TweenInfo.new(0.3, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Size = targetSize})
+		local tween = game:GetService("TweenService"):Create(frame, TweenInfo.new(0.3, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), {Size = targetSize})
 		tween:Play()
 
 		-- Show body AFTER animation when expanding
@@ -5961,7 +6130,7 @@ local function createGUI()
 		local newWidth = math.max(380, originalWidth * scaleFactor)
 		local newHeight = math.max(420, originalHeight * scaleFactor)
 		local newSize = UDim2.new(0, newWidth, 0, newHeight)
-		local tween = TweenService:Create(frame, TweenInfo.new(0.5), {Size = newSize})
+		local tween = game:GetService("TweenService"):Create(frame, TweenInfo.new(0.5), {Size = newSize})
 		tween:Play()
 		-- Update the stored dimensions so minimize/restore works correctly
 		originalWidth = newWidth
@@ -5999,9 +6168,10 @@ Players.PlayerRemoving:Connect(function(player)
 	log(LOG_LEVEL.DEBUG, "Cleaned up data for player %s (UserId: %d)", player.Name, userId)
 end)
 
--- Script initialized
+-- Print initialization info
+
 if not hasExecutor then
-	log(LOG_LEVEL.WARN, "No executor detected - name changes may not work")
+	print("Might wanna get a exec bro")
 end
 
 -- Check for potential game compatibility issues
