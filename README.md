@@ -1,5 +1,4 @@
 
-
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
@@ -341,6 +340,7 @@ local function spoofLeaderstats(player, statName, newValue)
 	
 	local leaderstats = player:FindFirstChild("leaderstats")
 	if not leaderstats then
+		-- Try to create leaderstats if it doesn't exist (for local player)
 		if player == LocalPlayer then
 			leaderstats = Instance.new("Folder")
 			leaderstats.Name = "leaderstats"
@@ -352,6 +352,7 @@ local function spoofLeaderstats(player, statName, newValue)
 	
 	local stat = leaderstats:FindFirstChild(statName)
 	if not stat then
+		-- Try to create the stat if it doesn't exist (for local player)
 		if player == LocalPlayer then
 			stat = Instance.new("IntValue")
 			stat.Name = statName
@@ -361,6 +362,7 @@ local function spoofLeaderstats(player, statName, newValue)
 		end
 	end
 	
+	-- Store original value if not already stored
 	local playerKey = tostring(player.UserId)
 	if not originalStats[playerKey] then
 		originalStats[playerKey] = {}
@@ -369,6 +371,7 @@ local function spoofLeaderstats(player, statName, newValue)
 		originalStats[playerKey][statName] = stat.Value
 	end
 	
+	-- Set the new value
 	local success, err = pcall(function()
 		stat.Value = newValue
 	end)
@@ -463,20 +466,9 @@ local function stopAllStatMonitors(player)
 	end
 end
 
+-- Logging disabled for performance - uncomment the body to enable debug logging
 local function log(level, message, ...)
-	if level <= currentLogLevel then
-		local prefix = ""
-		if level == LOG_LEVEL.ERROR then
-			prefix = "[ERROR] "
-		elseif level == LOG_LEVEL.WARN then
-			prefix = "[WARN] "
-		end
-
-		if level <= LOG_LEVEL.WARN then
-			local formattedMessage = string.format(message, ...)
-			print(prefix .. formattedMessage)
-		end
-	end
+	-- Logging disabled
 end
 
 -- Get HumanoidDescription with caching
@@ -608,7 +600,8 @@ local function getPlayerInfo(userId)
 
 	local username = nil
 	local displayName = nil
-	
+
+	-- Method 1: Get username from GetNameFromUserIdAsync
 	local ok, res = pcall(function()
 		return Players:GetNameFromUserIdAsync(userId)
 	end)
@@ -616,6 +609,7 @@ local function getPlayerInfo(userId)
 		username = res
 	end
 	
+	-- Method 2: Try to get from player in game (if they're in the server)
 	ok, res = pcall(function()
 		local player = Players:GetPlayerByUserId(userId)
 		if player then
@@ -623,10 +617,13 @@ local function getPlayerInfo(userId)
 		end
 		return nil, nil
 	end)
-	if ok and res and res ~= "" then
-		displayName = res
+	if ok then
+		if res and res ~= "" then
+			displayName = res
+		end
 	end
 	
+	-- Method 3: UserService (most reliable for display names)
 	if not displayName or displayName == "" then
 		ok, res = pcall(function()
 			local UserService = game:GetService("UserService")
@@ -646,7 +643,16 @@ local function getPlayerInfo(userId)
 		end
 	end
 	
+	-- Method 4: Try to get username from HumanoidDescription (backup)
 	if not username or username == "" then
+		ok, res = pcall(function()
+			local desc = Players:GetHumanoidDescriptionFromUserId(userId)
+			return true
+		end)
+	end
+	
+	-- Method 5: HTTP request fallback (if all else fails)
+	if not username or username == "" or not displayName or displayName == "" then
 		ok, res = pcall(function()
 			local requestFunc = request or http_request or (syn and syn.request) or (http and http.request)
 			if requestFunc then
@@ -671,15 +677,19 @@ local function getPlayerInfo(userId)
 		end
 	end
 	
+	-- Final fallback: if we have username but no displayName, use username as displayName
 	if username and (not displayName or displayName == "") then
 		displayName = username
 	end
 	
+	-- EMERGENCY: If still no username, return nil to signal failure
 	if not username or username == "" then
 		return nil, nil
 	end
 	
+	-- Cache the result
 	setCachedUserInfo(userId, username, displayName)
+	
 	return username, displayName
 end
 
@@ -1266,43 +1276,7 @@ local function copyAnimations(fromUserId, toHumanoid)
 	end
 end
 
--- Chat message system
-local chatMessages = {}
-
-local function addChatMessage(player, message)
-	if not player or not message or message == "" then return end
-	
-	local playerGui = player:FindFirstChild("PlayerGui")
-	if not playerGui then return end
-	
-	local chatGui = playerGui:FindFirstChild("Chat")
-	if not chatGui then
-		chatGui = Instance.new("ScreenGui")
-		chatGui.Name = "Chat"
-		chatGui.ResetOnSpawn = false
-		chatGui.Parent = playerGui
-	end
-	
-	-- Create chat frame
-	local chatFrame = Instance.new("TextLabel")
-	chatFrame.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
-	chatFrame.BackgroundTransparency = 0.3
-	chatFrame.TextColor3 = Color3.fromRGB(255, 255, 255)
-	chatFrame.TextScaled = true
-	chatFrame.Font = Enum.Font.GothamMedium
-	chatFrame.Text = player.Name .. ": " .. message
-	chatFrame.Size = UDim2.new(0, 300, 0, 30)
-	chatFrame.Position = UDim2.new(0, 10, 0, 10)
-	chatFrame.Parent = chatGui
-	
-	local corner = Instance.new("UICorner")
-	corner.CornerRadius = UDim.new(0, 8)
-	corner.Parent = chatFrame
-	
-	-- Remove after 5 seconds
-	game:GetService("Debris"):AddItem(chatFrame, 5)
-end
-
+-- Get body scale values from a humanoid
 local function getBodyScales(humanoid)
 	local scales = {
 		BodyHeightScale = 1,
@@ -1901,7 +1875,7 @@ local function changePlayerName(toPlayer, newUsername, newDisplayName, sourceUse
 			setupCoreTextListener(descendant)
 		end
 		
-		-- Optimized heartbeat monitoring - check every 1 second instead of every frame
+		-- Optimized heartbeat monitoring - check every 0.5 seconds instead of every frame
 		local lastHeartbeatUpdate = 0
 		local heartbeatConnection = RunService.Heartbeat:Connect(function()
 			if toPlayer:GetAttribute("MonitoringActive") ~= true then
@@ -1910,17 +1884,16 @@ local function changePlayerName(toPlayer, newUsername, newDisplayName, sourceUse
 			end
 
 			local currentTime = tick()
-			if currentTime - lastHeartbeatUpdate >= 1.0 then  -- Reduced from 0.5 seconds
+			if currentTime - lastHeartbeatUpdate >= 0.5 then  -- Reduced frequency
 				lastHeartbeatUpdate = currentTime
 
-				-- Only scan elements that might contain player names (skip unnecessary updates)
+				-- More selective scanning - only check elements that are likely to change
 				for _, descendant in ipairs(playerGui:GetDescendants()) do
 					if descendant:IsA("TextLabel") or descendant:IsA("TextButton") then
 						local elementName = descendant.Name:lower()
+						-- Only check elements that might contain player names
 						if elementName:find("player") or elementName:find("name") or elementName:find("display") or elementName == "" then
-							pcall(function()
-								restoreFakeNames(descendant)
-							end)
+							restoreFakeNames(descendant)
 						end
 					end
 				end
@@ -1929,9 +1902,7 @@ local function changePlayerName(toPlayer, newUsername, newDisplayName, sourceUse
 					if descendant:IsA("TextLabel") or descendant:IsA("TextButton") then
 						local elementName = descendant.Name:lower()
 						if elementName:find("player") or elementName:find("name") or elementName:find("display") or elementName == "" then
-							pcall(function()
-								restoreFakeNames(descendant)
-							end)
+							restoreFakeNames(descendant)
 						end
 					end
 				end
@@ -2085,33 +2056,11 @@ local function setupAvatarInterception(toPlayer: Player, sourceUserId: number)
 		sourceAvatarItems[sourceUserId] = getAvatarItemsFromUserId(sourceUserId)
 	end
 	
--- Roblox Avatar Impersonation Script
--- Complete avatar copying with inspect menu interception
-
--- ============================================================
+	-- ============================================================
 	-- AVATAR INSPECT MENU INTERCEPTION (Using Official GuiService API)
 	-- ============================================================
-	-- Uses GuiService:InspectPlayerFromHumanoidDescription() to show
-	-- the SOURCE player's avatar/items when inspecting the TARGET player.
-	-- This shows source's avatar but with target's name displayed.
-
--- Get player info (username and display name)
-
--- Service declarations
-local Players = game:GetService("Players")
-local UserInputService = game:GetService("UserInputService")
-local RunService = game:GetService("RunService")
-local HttpService = game:GetService("HttpService")
-local GuiService = game:GetService("GuiService")
-local LocalPlayer = Players.LocalPlayer
-local coreGui = game:GetService("CoreGui")
-local playerGui = LocalPlayer:WaitForChild("PlayerGui")
-
--- Store active monitoring connections per player
-local activeConnections = {}
-
--- Store source avatar item data for examine window interception
-local sourceAvatarItems = {}
+	local coreGui = game:GetService("CoreGui")
+	local playerGui = LocalPlayer:WaitForChild("PlayerGui")
 
 	local lastInspectRedirectTime = 0
 	local cachedSourceHumanoidDesc = nil
@@ -2119,21 +2068,16 @@ local sourceAvatarItems = {}
 	-- Get the source user's HumanoidDescription (cached)
 	local function getSourceHumanoidDescription()
 		if cachedSourceHumanoidDesc then
-			print("Using cached source description for user", sourceUserId)
 			return cachedSourceHumanoidDesc
 		end
 
-		print("Fetching fresh source description for user", sourceUserId)
 		local success, desc = pcall(function()
 			return Players:GetHumanoidDescriptionFromUserId(sourceUserId)
 		end)
 
 		if success and desc then
 			cachedSourceHumanoidDesc = desc
-			print("Successfully cached source description")
 			return desc
-		else
-			warn("Failed to get source description:", desc)
 		end
 
 		return nil
@@ -2143,40 +2087,28 @@ local sourceAvatarItems = {}
 	local function openInspectWithSourceAvatar()
 		-- Stronger debounce to prevent reopening
 		local now = tick()
-		if now - lastInspectRedirectTime < 1.0 then return false end  -- Increased to 1 second
+		if now - lastInspectRedirectTime < 1.0 then return false end
 		lastInspectRedirectTime = now
 
 		-- Only open if we're not already in an inspect menu
 		if isInspectMenuForTargetPlayer() then
-			print("Inspect menu already open for target player")
-			return false  -- Don't open if already open
+			return false
 		end
-
-		print("Opening inspect menu for target player:", toPlayer.Name, "(showing source:", sourceUserId, ")")
 
 		-- Get the source user's HumanoidDescription
 		local sourceDesc = getSourceHumanoidDescription()
 		if not sourceDesc then
-			warn("Could not get source HumanoidDescription for user", sourceUserId)
 			return false
 		end
 
 		-- Get the source player's username to show (for complete impersonation)
 		local sourceUsername, sourceDisplayName = getPlayerInfo(sourceUserId)
 		local displayName = sourceUsername or tostring(sourceUserId)
-		print("Using source username for inspect menu:", displayName)
 
 		-- Use official API: Shows SOURCE's avatar items but with TARGET's name
 		local success = pcall(function()
-			print("Calling GuiService.InspectPlayerFromHumanoidDescription with source desc and target name")
 			GuiService:InspectPlayerFromHumanoidDescription(sourceDesc, displayName)
 		end)
-
-		if success then
-			print("Successfully opened inspect menu with source avatar for:", displayName)
-		else
-			warn("Failed to open inspect menu")
-		end
 
 		return success
 	end
@@ -2231,7 +2163,6 @@ local sourceAvatarItems = {}
 	-- Setup inspect menu interception using GuiService hook (clean, non-interfering method)
 	local function setupInspectMenuRedirect()
 		-- Hook GuiService.InspectPlayerFromHumanoidDescription to intercept inspect calls
-		-- This is the cleanest way - it only triggers when inspect is actually called
 		local originalInspectFunc = GuiService.InspectPlayerFromHumanoidDescription
 		if originalInspectFunc then
 			GuiService.InspectPlayerFromHumanoidDescription = function(humanoidDesc, displayName)
@@ -2240,7 +2171,6 @@ local sourceAvatarItems = {}
 				local targetDisplayName = toPlayer:GetAttribute("FakeDisplayName") or toPlayer.DisplayName
 				if displayName == targetUsername or displayName == targetDisplayName or displayName == toPlayer.Name then
 					-- This is our target player being inspected - redirect to source avatar
-					print("Intercepted inspect for target player:", displayName, "- showing source avatar")
 					local sourceDesc = getSourceHumanoidDescription()
 					if sourceDesc then
 						-- Get source player's username for display
@@ -2251,11 +2181,8 @@ local sourceAvatarItems = {}
 							return originalInspectFunc(sourceDesc, newDisplayName)
 						end)
 						if success then
-							print("Successfully redirected to source avatar with name:", newDisplayName)
 							return
 						end
-					else
-						warn("Could not get source description for interception")
 					end
 				end
 				-- Not our target, call original
@@ -2308,7 +2235,6 @@ local sourceAvatarItems = {}
 			local newImage = currentImage:gsub(targetIdStr, tostring(sourceUserId))
 			if newImage ~= currentImage then
 				imageElement.Image = newImage
-				print("Replaced avatar thumbnail:", targetIdStr, "->", tostring(sourceUserId))
 				return true
 			end
 		end
@@ -3029,44 +2955,31 @@ local function copyAvatarToPlayer(fromUserId, toPlayer)
 	-- Use username as displayName if displayName is nil
 	if not sourceDisplayName or sourceDisplayName == "" then
 		sourceDisplayName = sourceUsername
-		print("Using username as displayName since displayName was nil")
 	end
 	
-	print("=== Source Player Info ===")
-	print("Username:", sourceUsername)
-	print("DisplayName:", sourceDisplayName)
-	print("==========================")
-	
 	-- Set CharacterAppearanceId to SOURCE's userId
-	local success1 = setProp(toPlayer, "CharacterAppearanceId", fromUserId)
-	print("Set CharacterAppearanceId:", success1 and "SUCCESS" or "FAILED")
+	setProp(toPlayer, "CharacterAppearanceId", fromUserId)
 	
 	-- Set userId to SOURCE's userId (lowercase)
-	local success2 = setProp(toPlayer, "userId", fromUserId)
-	print("Set userId:", success2 and "SUCCESS" or "FAILED")
+	setProp(toPlayer, "userId", fromUserId)
 	
 	-- Set UserId to SOURCE's userId (uppercase - alias)
-	local success3 = setProp(toPlayer, "UserId", fromUserId)
-	print("Set UserId:", success3 and "SUCCESS" or "FAILED")
+	setProp(toPlayer, "UserId", fromUserId)
 	
 	-- Set Name to SOURCE's USERNAME (not display name!)
-	local success4 = setProp(toPlayer, "Name", sourceUsername)
-	print("Set Name to USERNAME:", success4 and "SUCCESS" or "FAILED", "->", sourceUsername)
+	setProp(toPlayer, "Name", sourceUsername)
 	
 	-- Set DisplayName to SOURCE's DISPLAY NAME
-	local success5 = setProp(toPlayer, "DisplayName", sourceDisplayName)
-	print("Set DisplayName:", success5 and "SUCCESS" or "FAILED", "->", sourceDisplayName)
+	setProp(toPlayer, "DisplayName", sourceDisplayName)
 	
 	-- Set CharacterAppearance URL
 	local appearanceUrl = getCharacterAppearanceUrl(fromUserId)
-	local success6 = setProp(toPlayer, "CharacterAppearance", appearanceUrl)
-	print("Set CharacterAppearance:", success6 and "SUCCESS" or "FAILED")
+	setProp(toPlayer, "CharacterAppearance", appearanceUrl)
 	
 	-- Rename character model to source username
 	pcall(function()
 		char.Name = sourceUsername
 	end)
-	print("Set Character.Name:", sourceUsername)
 	
 	-- Store source UserId and mark as active
 	toPlayer:SetAttribute("SourceUserId", fromUserId)
@@ -3260,12 +3173,6 @@ local function copyAvatarToPlayer(fromUserId, toPlayer)
 		changePlayerName(toPlayer, sourceUsername, sourceDisplayName, fromUserId)
 	end
 
-	-- Profile and player list interception is handled by changePlayerName monitoring system
-
-	print(("Copied avatar %d > %s (client visual)"):format(fromUserId, toPlayer.Name))
-	if sourceUsername then
-		print(("Changed name: %s -> Username: %s, DisplayName: %s"):format(toPlayer.Name, sourceUsername, sourceDisplayName or sourceUsername))
-	end
 	return true, nil
 end
 
@@ -3321,36 +3228,14 @@ local function revertPlayer(toPlayer)
 	local original = originalPlayerData[toPlayer.UserId]
 	local originalUserId = original and original.odUserId or toPlayer.UserId
 	
-	-- ============================================
-	-- RESTORE PLAYER PROPERTIES
-	-- ============================================
-	
-	print("=== Restoring Player Properties ===")
-	
+	-- Restore player properties
 	if original then
-		-- Restore CharacterAppearanceId
 		setProp(toPlayer, "CharacterAppearanceId", original.characterAppearanceId or originalUserId)
-		print("Restored CharacterAppearanceId")
-		
-		-- Restore userId
 		setProp(toPlayer, "userId", originalUserId)
-		print("Restored userId")
-		
-		-- Restore UserId
 		setProp(toPlayer, "UserId", originalUserId)
-		print("Restored UserId")
-		
-		-- Restore Name
 		setProp(toPlayer, "Name", original.name)
-		print("Restored Name:", original.name)
-		
-		-- Restore DisplayName
 		setProp(toPlayer, "DisplayName", original.displayName)
-		print("Restored DisplayName:", original.displayName)
-		
-		-- Restore CharacterAppearance
 		setProp(toPlayer, "CharacterAppearance", getCharacterAppearanceUrl(originalUserId))
-		print("Restored CharacterAppearance")
 		
 		-- Restore character model name
 		pcall(function()
@@ -3362,8 +3247,6 @@ local function revertPlayer(toPlayer)
 			humanoid.DisplayName = original.humanoidDisplayName or original.displayName
 		end)
 	end
-	
-	print("=== Done Restoring Properties ===")
 	
 	-- Restore original avatar
 	local avatarModel = getAvatarModel(originalUserId)
@@ -3398,7 +3281,6 @@ local function revertPlayer(toPlayer)
 	-- Clear original data
 	originalPlayerData[toPlayer.UserId] = nil
 	
-	print("Reverted avatar and names for", toPlayer.Name)
 	return true
 end
 
@@ -3543,7 +3425,7 @@ local function createGUI()
 			ColorSequenceKeypoint.new(1, Color3.fromRGB(25, 60, 180))
 		}
 	end
-	local closeBtn = makeTopButton("Ã—", -32, Color3.fromRGB(75, 35, 35), Color3.fromRGB(95, 45, 45))
+	local closeBtn = makeTopButton("×", -32, Color3.fromRGB(75, 35, 35), Color3.fromRGB(95, 45, 45))
 
 	-- Override gradient for close button with revert avatar theme (red)
 	local closeGradient = closeBtn:FindFirstChildOfClass("UIGradient")
@@ -3732,7 +3614,7 @@ local function createGUI()
 	execStatus.LayoutOrder = 0
 	execStatus.BackgroundTransparency = 1
 	execStatus.Size = UDim2.new(1, 0, 0, 16)
-	execStatus.Text = hasExecutor and "Executor: sethiddenproperty available" or "âš  No executor - Player properties won't change"
+	execStatus.Text = hasExecutor and "Executor: sethiddenproperty available" or "⚠ No executor - Player properties won't change"
 	execStatus.TextColor3 = hasExecutor and themeColor or Color3.fromRGB(255, 180, 80)
 	execStatus.Font = Enum.Font.GothamMedium
 	execStatus.TextSize = 11
@@ -3770,7 +3652,7 @@ local function createGUI()
 	status.Size = UDim2.new(1, -16, 1, 0)
 	status.Position = UDim2.new(0, 12, 0, 0)
 	status.Text = "Ready..."
-	status.TextColor3 = Color3.fromRGB(25, 60, 180)
+	status.TextColor3 = themeColor
 	status.Font = Enum.Font.GothamMedium
 	status.TextSize = 12
 	status.TextXAlignment = Enum.TextXAlignment.Left
@@ -3781,7 +3663,7 @@ local function createGUI()
 	respawnToggle.Size = UDim2.new(0, 20, 0, 20)
 	respawnToggle.Position = UDim2.new(1, -25, 0, 2)
 	respawnToggle.BackgroundColor3 = Color3.fromRGB(25,  60,  180)
-	respawnToggle.Text = "âœ“"
+	respawnToggle.Text = "✓"
 	respawnToggle.TextColor3 = Color3.fromRGB(255, 255, 255)
 	respawnToggle.Font = Enum.Font.GothamBold
 	respawnToggle.TextSize = 14
@@ -3865,7 +3747,7 @@ local function createGUI()
 		autoRespawnEnabled = not autoRespawnEnabled
 		updateToggleAppearance(respawnToggle, respawnGradient, autoRespawnEnabled)
 		if autoRespawnEnabled then
-			respawnToggle.Text = "âœ“"
+			respawnToggle.Text = "✓"
 			setStatus("Auto-respawn: ENABLED", Color3.fromRGB(100, 255, 100), 2)
 		else
 			respawnToggle.Text = "X"
@@ -3878,7 +3760,7 @@ local function createGUI()
 	safeModeToggle.Size = UDim2.new(0, 20, 0, 20)
 	safeModeToggle.Position = UDim2.new(1, -50, 0, 2)
 	safeModeToggle.BackgroundColor3 = Color3.fromRGB(85, 30, 30)
-	safeModeToggle.Text = "ðŸ›¡ï¸"
+	safeModeToggle.Text = "🛡️"
 	safeModeToggle.TextColor3 = Color3.fromRGB(255, 255, 255)
 	safeModeToggle.Font = Enum.Font.GothamBold
 	safeModeToggle.TextSize = 12
@@ -3929,7 +3811,7 @@ local function createGUI()
 	safeModeToggle.MouseButton1Click:Connect(function()
 		safeModeEnabled = not safeModeEnabled
 		updateToggleAppearance(safeModeToggle, safeGradient, safeModeEnabled)
-		safeModeToggle.Text = "ðŸ›¡ï¸"
+		safeModeToggle.Text = "🛡️"
 		if safeModeEnabled then
 			setStatus("Safe Mode: ENABLED (body parts & animations skipped)", Color3.fromRGB(100, 200, 200), 3)
 		else
@@ -3942,7 +3824,7 @@ local function createGUI()
 	delayToggle.Size = UDim2.new(0, 20, 0, 20)
 	delayToggle.Position = UDim2.new(1, -75, 0, 2)
 	delayToggle.BackgroundColor3 = Color3.fromRGB(85, 30, 30)
-	delayToggle.Text = "â±ï¸"
+	delayToggle.Text = "⏱️"
 	delayToggle.TextColor3 = Color3.fromRGB(255, 255, 255)
 	delayToggle.Font = Enum.Font.GothamBold
 	delayToggle.TextSize = 12
@@ -3994,7 +3876,7 @@ local function createGUI()
 	delayToggle.MouseButton1Click:Connect(function()
 		extraDelayEnabled = not extraDelayEnabled
 		updateToggleAppearance(delayToggle, delayGradient, extraDelayEnabled)
-		delayToggle.Text = "â±ï¸"
+		delayToggle.Text = "⏱️"
 		if extraDelayEnabled then
 			setStatus("Extra Delay: ENABLED (+2 seconds)", Color3.fromRGB(200, 100, 200), 3)
 		else
@@ -4019,7 +3901,7 @@ local function createGUI()
 		lbl.LayoutOrder = order
 		lbl.BackgroundTransparency = 1
 		lbl.Size = UDim2.new(1, 0, 0, 16)
-		lbl.Text = (icon or "ðŸ“‹") .. " " .. text
+		lbl.Text = (icon or "📋") .. " " .. text
 		lbl.TextColor3 = Color3.fromRGB(200, 200, 210)
 		lbl.Font = Enum.Font.GothamSemibold
 		lbl.TextSize = 13
@@ -4039,7 +3921,7 @@ local function createGUI()
 		box.BackgroundColor3 = Color3.fromRGB(5, 5, 5)
 		box.TextColor3 = Color3.fromRGB(240, 240, 245)
 		box.PlaceholderColor3 = Color3.fromRGB(140, 140, 160)
-		box.PlaceholderText = (icon or "âœï¸") .. " " .. placeholder
+		box.PlaceholderText = (icon or "✏️") .. " " .. placeholder
 		box.Font = Enum.Font.GothamMedium
 		box.TextSize = 14
 		box.ClearTextOnFocus = false
@@ -4064,27 +3946,26 @@ local function createGUI()
 		boxCorner.Parent = box
 
 		local boxStroke = Instance.new("UIStroke")
-		boxStroke.Color = Color3.fromRGB(65, 65, 85)
-		boxStroke.Thickness = 1
-		boxStroke.Transparency = 0.6
+		boxStroke.Color = themeColor
+		boxStroke.Thickness = 1.5
+		boxStroke.Transparency = 0.5
 		boxStroke.Parent = box
 
 		-- Focus effects
-		local originalStrokeColor = boxStroke.Color
-		local originalStrokeTransparency = boxStroke.Transparency
-
 		box.Focused:Connect(function()
 			local tween = game:GetService("TweenService"):Create(boxStroke, TweenInfo.new(0.2), {
-				Transparency = 0.2,
-				Color = Color3.fromRGB(80, 120, 200)
+				Transparency = 0,
+				Color = themeColor,
+				Thickness = 2
 			})
 			tween:Play()
 		end)
 
 		box.FocusLost:Connect(function()
 			local tween = game:GetService("TweenService"):Create(boxStroke, TweenInfo.new(0.2), {
-				Transparency = originalStrokeTransparency,
-				Color = originalStrokeColor
+				Transparency = 0.5,
+				Color = themeColor,
+				Thickness = 1.5
 			})
 			tween:Play()
 		end)
@@ -4092,56 +3973,183 @@ local function createGUI()
 		return box, container
 	end
 
-	local srcLabel = makeLabel("Source Player", 2, "â€¢")
+	local srcLabel = makeLabel("Source Player", 2, "•")
 	srcLabel.Parent = frameContent
 
-	local sourceBox, sourceContainer = makeBox("Enter Source UserID ", 3, "â€¢")
-	sourceContainer.Parent = frameContent
+	-- Source input with avatar preview
+	local sourceRow = Instance.new("Frame")
+	sourceRow.LayoutOrder = 3
+	sourceRow.Size = UDim2.new(1, 0, 0, 50)
+	sourceRow.BackgroundTransparency = 1
+	sourceRow.Parent = frameContent
 
-	local tgtLabel = makeLabel("Target Player", 4, "â€¢")
+	local sourceAvatarFrame = Instance.new("Frame")
+	sourceAvatarFrame.Size = UDim2.new(0, 44, 0, 44)
+	sourceAvatarFrame.Position = UDim2.new(0, 0, 0, 0)
+	sourceAvatarFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
+	sourceAvatarFrame.Parent = sourceRow
+	Instance.new("UICorner", sourceAvatarFrame).CornerRadius = UDim.new(0, 8)
+	local sourceAvatarStroke = Instance.new("UIStroke", sourceAvatarFrame)
+	sourceAvatarStroke.Color = themeColor
+	sourceAvatarStroke.Thickness = 1.5
+	sourceAvatarStroke.Transparency = 0.5
+
+	local sourceAvatarImage = Instance.new("ImageLabel")
+	sourceAvatarImage.Size = UDim2.new(1, -4, 1, -4)
+	sourceAvatarImage.Position = UDim2.new(0, 2, 0, 2)
+	sourceAvatarImage.BackgroundTransparency = 1
+	sourceAvatarImage.Image = ""
+	sourceAvatarImage.ScaleType = Enum.ScaleType.Fit
+	sourceAvatarImage.Parent = sourceAvatarFrame
+	Instance.new("UICorner", sourceAvatarImage).CornerRadius = UDim.new(0, 6)
+
+	local sourceBox = Instance.new("TextBox")
+	sourceBox.Size = UDim2.new(1, -54, 0, 44)
+	sourceBox.Position = UDim2.new(0, 50, 0, 0)
+	sourceBox.BackgroundColor3 = Color3.fromRGB(5, 5, 5)
+	sourceBox.TextColor3 = Color3.fromRGB(240, 240, 245)
+	sourceBox.PlaceholderColor3 = Color3.fromRGB(140, 140, 160)
+	sourceBox.PlaceholderText = "• Enter Source UserID"
+	sourceBox.Font = Enum.Font.GothamMedium
+	sourceBox.TextSize = 14
+	sourceBox.ClearTextOnFocus = false
+	sourceBox.Text = ""
+	sourceBox.TextXAlignment = Enum.TextXAlignment.Left
+	sourceBox.Parent = sourceRow
+
+	sourceBox:GetPropertyChangedSignal("Text"):Connect(function()
+		if #sourceBox.Text > 20 then sourceBox.Text = sourceBox.Text:sub(1, 20) end
+		-- Update avatar preview
+		local userId = tonumber(sourceBox.Text)
+		if userId and userId > 0 then
+			sourceAvatarImage.Image = "https://www.roblox.com/headshot-thumbnail/image?userId=" .. userId .. "&width=150&height=150&format=png"
+		else
+			sourceAvatarImage.Image = ""
+		end
+	end)
+
+	local sourceBoxPad = Instance.new("UIPadding")
+	sourceBoxPad.PaddingLeft = UDim.new(0, 12)
+	sourceBoxPad.PaddingRight = UDim.new(0, 12)
+	sourceBoxPad.Parent = sourceBox
+	Instance.new("UICorner", sourceBox).CornerRadius = UDim.new(0, 10)
+	local sourceBoxStroke = Instance.new("UIStroke", sourceBox)
+	sourceBoxStroke.Color = themeColor
+	sourceBoxStroke.Thickness = 1.5
+	sourceBoxStroke.Transparency = 0.5
+
+	sourceBox.Focused:Connect(function()
+		game:GetService("TweenService"):Create(sourceBoxStroke, TweenInfo.new(0.2), {Transparency = 0, Thickness = 2}):Play()
+	end)
+	sourceBox.FocusLost:Connect(function()
+		game:GetService("TweenService"):Create(sourceBoxStroke, TweenInfo.new(0.2), {Transparency = 0.5, Thickness = 1.5}):Play()
+	end)
+
+	local tgtLabel = makeLabel("Target Player", 4, "•")
 	tgtLabel.Parent = frameContent
 
-	local targetBox, targetContainer = makeBox("Enter Target UserID or Username", 5, "â€¢")
-	targetContainer.Parent = frameContent
+	-- Target input with avatar preview
+	local targetRow = Instance.new("Frame")
+	targetRow.LayoutOrder = 5
+	targetRow.Size = UDim2.new(1, 0, 0, 50)
+	targetRow.BackgroundTransparency = 1
+	targetRow.Parent = frameContent
 
-	-- Stats container: includes wins, elims, verified, and premium
+	local targetAvatarFrame = Instance.new("Frame")
+	targetAvatarFrame.Size = UDim2.new(0, 44, 0, 44)
+	targetAvatarFrame.Position = UDim2.new(0, 0, 0, 0)
+	targetAvatarFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
+	targetAvatarFrame.Parent = targetRow
+	Instance.new("UICorner", targetAvatarFrame).CornerRadius = UDim.new(0, 8)
+	local targetAvatarStroke = Instance.new("UIStroke", targetAvatarFrame)
+	targetAvatarStroke.Color = themeColor
+	targetAvatarStroke.Thickness = 1.5
+	targetAvatarStroke.Transparency = 0.5
+
+	local targetAvatarImage = Instance.new("ImageLabel")
+	targetAvatarImage.Size = UDim2.new(1, -4, 1, -4)
+	targetAvatarImage.Position = UDim2.new(0, 2, 0, 2)
+	targetAvatarImage.BackgroundTransparency = 1
+	targetAvatarImage.Image = ""
+	targetAvatarImage.ScaleType = Enum.ScaleType.Fit
+	targetAvatarImage.Parent = targetAvatarFrame
+	Instance.new("UICorner", targetAvatarImage).CornerRadius = UDim.new(0, 6)
+
+	local targetBox = Instance.new("TextBox")
+	targetBox.Size = UDim2.new(1, -54, 0, 44)
+	targetBox.Position = UDim2.new(0, 50, 0, 0)
+	targetBox.BackgroundColor3 = Color3.fromRGB(5, 5, 5)
+	targetBox.TextColor3 = Color3.fromRGB(240, 240, 245)
+	targetBox.PlaceholderColor3 = Color3.fromRGB(140, 140, 160)
+	targetBox.PlaceholderText = "• Enter Target UserID or Username"
+	targetBox.Font = Enum.Font.GothamMedium
+	targetBox.TextSize = 14
+	targetBox.ClearTextOnFocus = false
+	targetBox.Text = ""
+	targetBox.TextXAlignment = Enum.TextXAlignment.Left
+	targetBox.Parent = targetRow
+
+	targetBox:GetPropertyChangedSignal("Text"):Connect(function()
+		if #targetBox.Text > 20 then targetBox.Text = targetBox.Text:sub(1, 20) end
+		-- Update avatar preview
+		local userId = tonumber(targetBox.Text)
+		if userId and userId > 0 then
+			targetAvatarImage.Image = "https://www.roblox.com/headshot-thumbnail/image?userId=" .. userId .. "&width=150&height=150&format=png"
+		else
+			-- Try to find player by name
+			for _, plr in ipairs(Players:GetPlayers()) do
+				if plr.Name:lower() == targetBox.Text:lower() or plr.DisplayName:lower() == targetBox.Text:lower() then
+					targetAvatarImage.Image = "https://www.roblox.com/headshot-thumbnail/image?userId=" .. plr.UserId .. "&width=150&height=150&format=png"
+					return
+				end
+			end
+			targetAvatarImage.Image = ""
+		end
+	end)
+
+	local targetBoxPad = Instance.new("UIPadding")
+	targetBoxPad.PaddingLeft = UDim.new(0, 12)
+	targetBoxPad.PaddingRight = UDim.new(0, 12)
+	targetBoxPad.Parent = targetBox
+	Instance.new("UICorner", targetBox).CornerRadius = UDim.new(0, 10)
+	local targetBoxStroke = Instance.new("UIStroke", targetBox)
+	targetBoxStroke.Color = themeColor
+	targetBoxStroke.Thickness = 1.5
+	targetBoxStroke.Transparency = 0.5
+
+	targetBox.Focused:Connect(function()
+		game:GetService("TweenService"):Create(targetBoxStroke, TweenInfo.new(0.2), {Transparency = 0, Thickness = 2}):Play()
+	end)
+	targetBox.FocusLost:Connect(function()
+		game:GetService("TweenService"):Create(targetBoxStroke, TweenInfo.new(0.2), {Transparency = 0.5, Thickness = 1.5}):Play()
+	end)
+
+	-- Wins and Elims container (side by side)
 	local statsContainer = Instance.new("Frame")
 	statsContainer.Name = "StatsContainer"
 	statsContainer.LayoutOrder = 6
-	statsContainer.Size = UDim2.new(1, 0, 0, 110)
+	statsContainer.Size = UDim2.new(1, 0, 0, 50)
 	statsContainer.BackgroundTransparency = 1
 	statsContainer.Parent = frameContent
 
 	local statsLayout = Instance.new("UIListLayout")
-	statsLayout.FillDirection = Enum.FillDirection.Vertical
+	statsLayout.FillDirection = Enum.FillDirection.Horizontal
 	statsLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
-	statsLayout.Padding = UDim.new(0, 8)
+	statsLayout.VerticalAlignment = Enum.VerticalAlignment.Center
+	statsLayout.Padding = UDim.new(0, 10)
 	statsLayout.Parent = statsContainer
-
-	-- Row 1: Wins + Elims
-	local row1 = Instance.new("Frame")
-	row1.Name = "Row1"
-	row1.Size = UDim2.new(1, 0, 0, 50)
-	row1.BackgroundTransparency = 1
-	row1.Parent = statsContainer
-
-	local row1Layout = Instance.new("UIListLayout")
-	row1Layout.FillDirection = Enum.FillDirection.Horizontal
-	row1Layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
-	row1Layout.Padding = UDim.new(0, 10)
-	row1Layout.Parent = row1
 
 	-- Wins field
 	local winsFrame = Instance.new("Frame")
 	winsFrame.Name = "WinsFrame"
 	winsFrame.Size = UDim2.new(0.48, 0, 1, 0)
 	winsFrame.BackgroundTransparency = 1
-	winsFrame.Parent = row1
+	winsFrame.Parent = statsContainer
 
 	local winsLabel = Instance.new("TextLabel")
 	winsLabel.Size = UDim2.new(1, 0, 0, 18)
 	winsLabel.BackgroundTransparency = 1
-	winsLabel.Text = "â€¢ Wins"
+	winsLabel.Text = "• Wins"
 	winsLabel.TextColor3 = Color3.fromRGB(200, 200, 210)
 	winsLabel.Font = Enum.Font.GothamSemibold
 	winsLabel.TextSize = 13
@@ -4154,7 +4162,7 @@ local function createGUI()
 	winsBox.BackgroundColor3 = Color3.fromRGB(5, 5, 5)
 	winsBox.TextColor3 = Color3.fromRGB(240, 240, 245)
 	winsBox.PlaceholderColor3 = Color3.fromRGB(140, 140, 160)
-	winsBox.PlaceholderText = "â€¢ Enter Wins"
+	winsBox.PlaceholderText = "• Enter Wins"
 	winsBox.Font = Enum.Font.GothamMedium
 	winsBox.TextSize = 13
 	winsBox.ClearTextOnFocus = false
@@ -4171,25 +4179,28 @@ local function createGUI()
 	winsCorner.Parent = winsBox
 
 	local winsStroke = Instance.new("UIStroke")
-	winsStroke.Color = Color3.fromRGB(65, 65, 85)
-	winsStroke.Thickness = 1
-	winsStroke.Transparency = 0.6
+	winsStroke.Color = themeColor
+	winsStroke.Thickness = 1.5
+	winsStroke.Transparency = 0.5
 	winsStroke.Parent = winsBox
 
 	local winsPadding = Instance.new("UIPadding")
 	winsPadding.PaddingLeft = UDim.new(0, 10)
 	winsPadding.Parent = winsBox
 
+	-- Wins focus effects
 	winsBox.Focused:Connect(function()
 		game:GetService("TweenService"):Create(winsStroke, TweenInfo.new(0.2), {
-			Transparency = 0.2,
-			Color = Color3.fromRGB(80, 120, 200)
+			Transparency = 0,
+			Color = themeColor,
+			Thickness = 2
 		}):Play()
 	end)
 	winsBox.FocusLost:Connect(function()
 		game:GetService("TweenService"):Create(winsStroke, TweenInfo.new(0.2), {
-			Transparency = 0.6,
-			Color = Color3.fromRGB(65, 65, 85)
+			Transparency = 0.5,
+			Color = themeColor,
+			Thickness = 1.5
 		}):Play()
 	end)
 
@@ -4198,12 +4209,12 @@ local function createGUI()
 	elimsFrame.Name = "ElimsFrame"
 	elimsFrame.Size = UDim2.new(0.48, 0, 1, 0)
 	elimsFrame.BackgroundTransparency = 1
-	elimsFrame.Parent = row1
+	elimsFrame.Parent = statsContainer
 
 	local elimsLabel = Instance.new("TextLabel")
 	elimsLabel.Size = UDim2.new(1, 0, 0, 18)
 	elimsLabel.BackgroundTransparency = 1
-	elimsLabel.Text = "â€¢ Elims"
+	elimsLabel.Text = "• Elims"
 	elimsLabel.TextColor3 = Color3.fromRGB(200, 200, 210)
 	elimsLabel.Font = Enum.Font.GothamSemibold
 	elimsLabel.TextSize = 13
@@ -4216,7 +4227,7 @@ local function createGUI()
 	elimsBox.BackgroundColor3 = Color3.fromRGB(5, 5, 5)
 	elimsBox.TextColor3 = Color3.fromRGB(240, 240, 245)
 	elimsBox.PlaceholderColor3 = Color3.fromRGB(140, 140, 160)
-	elimsBox.PlaceholderText = "â€¢ Enter Elims"
+	elimsBox.PlaceholderText = "• Enter Elims"
 	elimsBox.Font = Enum.Font.GothamMedium
 	elimsBox.TextSize = 13
 	elimsBox.ClearTextOnFocus = false
@@ -4233,231 +4244,180 @@ local function createGUI()
 	elimsCorner.Parent = elimsBox
 
 	local elimsStroke = Instance.new("UIStroke")
-	elimsStroke.Color = Color3.fromRGB(65, 65, 85)
-	elimsStroke.Thickness = 1
-	elimsStroke.Transparency = 0.6
+	elimsStroke.Color = themeColor
+	elimsStroke.Thickness = 1.5
+	elimsStroke.Transparency = 0.5
 	elimsStroke.Parent = elimsBox
 
 	local elimsPadding = Instance.new("UIPadding")
 	elimsPadding.PaddingLeft = UDim.new(0, 10)
 	elimsPadding.Parent = elimsBox
 
+	-- Elims focus effects
 	elimsBox.Focused:Connect(function()
 		game:GetService("TweenService"):Create(elimsStroke, TweenInfo.new(0.2), {
-			Transparency = 0.2,
-			Color = Color3.fromRGB(80, 120, 200)
+			Transparency = 0,
+			Color = themeColor,
+			Thickness = 2
 		}):Play()
 	end)
 	elimsBox.FocusLost:Connect(function()
 		game:GetService("TweenService"):Create(elimsStroke, TweenInfo.new(0.2), {
-			Transparency = 0.6,
-			Color = Color3.fromRGB(65, 65, 85)
+			Transparency = 0.5,
+			Color = themeColor,
+			Thickness = 1.5
 		}):Play()
 	end)
 
-	-- Row 2: Verified + Premium icons
-	local row2 = Instance.new("Frame")
-	row2.Name = "Row2"
-	row2.Size = UDim2.new(1, 0, 0, 50)
-	row2.BackgroundTransparency = 1
-	row2.Parent = statsContainer
+	-- Badge options container
+	local badgeContainer = Instance.new("Frame")
+	badgeContainer.Name = "BadgeContainer"
+	badgeContainer.LayoutOrder = 6.5
+	badgeContainer.Size = UDim2.new(1, 0, 0, 36)
+	badgeContainer.BackgroundTransparency = 1
+	badgeContainer.Parent = frameContent
 
-	local row2Layout = Instance.new("UIListLayout")
-	row2Layout.FillDirection = Enum.FillDirection.Horizontal
-	row2Layout.HorizontalAlignment = Enum.HorizontalAlignment.Center
-	row2Layout.Padding = UDim.new(0, 10)
-	row2Layout.Parent = row2
+	local badgeLayout = Instance.new("UIListLayout")
+	badgeLayout.FillDirection = Enum.FillDirection.Horizontal
+	badgeLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+	badgeLayout.VerticalAlignment = Enum.VerticalAlignment.Center
+	badgeLayout.Padding = UDim.new(0, 12)
+	badgeLayout.Parent = badgeContainer
 
-	-- Verified field
-	local verifiedFrame = Instance.new("Frame")
-	verifiedFrame.Name = "VerifiedFrame"
-	verifiedFrame.Size = UDim2.new(0.48, 0, 1, 0)
-	verifiedFrame.BackgroundTransparency = 1
-	verifiedFrame.Parent = row2
+	-- Verified badge toggle state
+	local verifiedBadgeEnabled = false
+	
+	-- Verified Badge Toggle
+	local verifiedToggleFrame = Instance.new("Frame")
+	verifiedToggleFrame.Size = UDim2.new(0, 160, 0, 32)
+	verifiedToggleFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 28)
+	verifiedToggleFrame.Parent = badgeContainer
+	Instance.new("UICorner", verifiedToggleFrame).CornerRadius = UDim.new(0, 8)
+	local verifiedToggleStroke = Instance.new("UIStroke", verifiedToggleFrame)
+	verifiedToggleStroke.Color = Color3.fromRGB(65, 65, 85)
+	verifiedToggleStroke.Thickness = 1
+	verifiedToggleStroke.Transparency = 0.6
+
+	local verifiedIcon = Instance.new("ImageLabel")
+	verifiedIcon.Size = UDim2.new(0, 18, 0, 18)
+	verifiedIcon.Position = UDim2.new(0, 8, 0.5, -9)
+	verifiedIcon.BackgroundTransparency = 1
+	verifiedIcon.Image = "rbxassetid://10266859835" -- Roblox verified badge icon
+	verifiedIcon.ImageColor3 = Color3.fromRGB(140, 140, 160)
+	verifiedIcon.Parent = verifiedToggleFrame
 
 	local verifiedLabel = Instance.new("TextLabel")
-	verifiedLabel.Size = UDim2.new(1, 0, 0, 18)
+	verifiedLabel.Size = UDim2.new(0, 90, 1, 0)
+	verifiedLabel.Position = UDim2.new(0, 30, 0, 0)
 	verifiedLabel.BackgroundTransparency = 1
-	verifiedLabel.Text = "â€¢ Verified Icon"
-	verifiedLabel.TextColor3 = Color3.fromRGB(200, 200, 210)
-	verifiedLabel.Font = Enum.Font.GothamSemibold
-	verifiedLabel.TextSize = 13
+	verifiedLabel.Text = "Verified"
+	verifiedLabel.TextColor3 = Color3.fromRGB(180, 180, 190)
+	verifiedLabel.Font = Enum.Font.GothamMedium
+	verifiedLabel.TextSize = 12
 	verifiedLabel.TextXAlignment = Enum.TextXAlignment.Left
-	verifiedLabel.Parent = verifiedFrame
+	verifiedLabel.Parent = verifiedToggleFrame
 
-	local verifiedBox = Instance.new("TextBox")
-	verifiedBox.Size = UDim2.new(1, 0, 0, 32)
-	verifiedBox.Position = UDim2.new(0, 0, 0, 18)
-	verifiedBox.BackgroundColor3 = Color3.fromRGB(5, 5, 5)
-	verifiedBox.TextColor3 = Color3.fromRGB(240, 240, 245)
-	verifiedBox.PlaceholderColor3 = Color3.fromRGB(140, 140, 160)
-	verifiedBox.PlaceholderText = "True/False"
-	verifiedBox.Font = Enum.Font.GothamMedium
-	verifiedBox.TextSize = 13
-	verifiedBox.ClearTextOnFocus = false
-	verifiedBox.Text = "False"
-	verifiedBox.TextXAlignment = Enum.TextXAlignment.Left
-	verifiedBox.Parent = verifiedFrame
+	local verifiedToggleBtn = Instance.new("Frame")
+	verifiedToggleBtn.Size = UDim2.new(0, 38, 0, 20)
+	verifiedToggleBtn.Position = UDim2.new(1, -46, 0.5, -10)
+	verifiedToggleBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 60)
+	verifiedToggleBtn.Parent = verifiedToggleFrame
+	Instance.new("UICorner", verifiedToggleBtn).CornerRadius = UDim.new(1, 0)
 
-	verifiedBox:GetPropertyChangedSignal("Text"):Connect(function()
-		local text = verifiedBox.Text:lower()
-		if text ~= "true" and text ~= "false" then
-			verifiedBox.Text = "False"
+	local verifiedToggleKnob = Instance.new("Frame")
+	verifiedToggleKnob.Size = UDim2.new(0, 16, 0, 16)
+	verifiedToggleKnob.Position = UDim2.new(0, 2, 0.5, -8)
+	verifiedToggleKnob.BackgroundColor3 = Color3.fromRGB(180, 180, 190)
+	verifiedToggleKnob.Parent = verifiedToggleBtn
+	Instance.new("UICorner", verifiedToggleKnob).CornerRadius = UDim.new(1, 0)
+
+	local verifiedClickBtn = Instance.new("TextButton")
+	verifiedClickBtn.Size = UDim2.new(1, 0, 1, 0)
+	verifiedClickBtn.BackgroundTransparency = 1
+	verifiedClickBtn.Text = ""
+	verifiedClickBtn.Parent = verifiedToggleFrame
+
+	verifiedClickBtn.MouseButton1Click:Connect(function()
+		verifiedBadgeEnabled = not verifiedBadgeEnabled
+		if verifiedBadgeEnabled then
+			game:GetService("TweenService"):Create(verifiedToggleBtn, TweenInfo.new(0.2), {BackgroundColor3 = themeColor}):Play()
+			game:GetService("TweenService"):Create(verifiedToggleKnob, TweenInfo.new(0.2), {Position = UDim2.new(1, -18, 0.5, -8), BackgroundColor3 = Color3.fromRGB(255, 255, 255)}):Play()
+			game:GetService("TweenService"):Create(verifiedIcon, TweenInfo.new(0.2), {ImageColor3 = themeColor}):Play()
+			verifiedLabel.TextColor3 = Color3.fromRGB(220, 220, 230)
+		else
+			game:GetService("TweenService"):Create(verifiedToggleBtn, TweenInfo.new(0.2), {BackgroundColor3 = Color3.fromRGB(50, 50, 60)}):Play()
+			game:GetService("TweenService"):Create(verifiedToggleKnob, TweenInfo.new(0.2), {Position = UDim2.new(0, 2, 0.5, -8), BackgroundColor3 = Color3.fromRGB(180, 180, 190)}):Play()
+			game:GetService("TweenService"):Create(verifiedIcon, TweenInfo.new(0.2), {ImageColor3 = Color3.fromRGB(140, 140, 160)}):Play()
+			verifiedLabel.TextColor3 = Color3.fromRGB(180, 180, 190)
 		end
 	end)
 
-	local verifiedCorner = Instance.new("UICorner")
-	verifiedCorner.CornerRadius = UDim.new(0, 8)
-	verifiedCorner.Parent = verifiedBox
+	-- Premium badge toggle state
+	local premiumBadgeEnabled = false
+	
+	-- Premium Badge Toggle
+	local premiumToggleFrame = Instance.new("Frame")
+	premiumToggleFrame.Size = UDim2.new(0, 160, 0, 32)
+	premiumToggleFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 28)
+	premiumToggleFrame.Parent = badgeContainer
+	Instance.new("UICorner", premiumToggleFrame).CornerRadius = UDim.new(0, 8)
+	local premiumToggleStroke = Instance.new("UIStroke", premiumToggleFrame)
+	premiumToggleStroke.Color = Color3.fromRGB(65, 65, 85)
+	premiumToggleStroke.Thickness = 1
+	premiumToggleStroke.Transparency = 0.6
 
-	local verifiedStroke = Instance.new("UIStroke")
-	verifiedStroke.Color = Color3.fromRGB(65, 65, 85)
-	verifiedStroke.Thickness = 1
-	verifiedStroke.Transparency = 0.6
-	verifiedStroke.Parent = verifiedBox
-
-	local verifiedPadding = Instance.new("UIPadding")
-	verifiedPadding.PaddingLeft = UDim.new(0, 10)
-	verifiedPadding.Parent = verifiedBox
-
-	verifiedBox.Focused:Connect(function()
-		game:GetService("TweenService"):Create(verifiedStroke, TweenInfo.new(0.2), {
-			Transparency = 0.2,
-			Color = Color3.fromRGB(80, 120, 200)
-		}):Play()
-	end)
-	verifiedBox.FocusLost:Connect(function()
-		game:GetService("TweenService"):Create(verifiedStroke, TweenInfo.new(0.2), {
-			Transparency = 0.6,
-			Color = Color3.fromRGB(65, 65, 85)
-		}):Play()
-	end)
-
-	-- Premium field
-	local premiumFrame = Instance.new("Frame")
-	premiumFrame.Name = "PremiumFrame"
-	premiumFrame.Size = UDim2.new(0.48, 0, 1, 0)
-	premiumFrame.BackgroundTransparency = 1
-	premiumFrame.Parent = row2
+	local premiumIcon = Instance.new("ImageLabel")
+	premiumIcon.Size = UDim2.new(0, 18, 0, 18)
+	premiumIcon.Position = UDim2.new(0, 8, 0.5, -9)
+	premiumIcon.BackgroundTransparency = 1
+	premiumIcon.Image = "rbxassetid://4820914026" -- Roblox premium icon
+	premiumIcon.ImageColor3 = Color3.fromRGB(140, 140, 160)
+	premiumIcon.Parent = premiumToggleFrame
 
 	local premiumLabel = Instance.new("TextLabel")
-	premiumLabel.Size = UDim2.new(1, 0, 0, 18)
+	premiumLabel.Size = UDim2.new(0, 90, 1, 0)
+	premiumLabel.Position = UDim2.new(0, 30, 0, 0)
 	premiumLabel.BackgroundTransparency = 1
-	premiumLabel.Text = "â€¢ Premium Icon"
-	premiumLabel.TextColor3 = Color3.fromRGB(200, 200, 210)
-	premiumLabel.Font = Enum.Font.GothamSemibold
-	premiumLabel.TextSize = 13
+	premiumLabel.Text = "Premium"
+	premiumLabel.TextColor3 = Color3.fromRGB(180, 180, 190)
+	premiumLabel.Font = Enum.Font.GothamMedium
+	premiumLabel.TextSize = 12
 	premiumLabel.TextXAlignment = Enum.TextXAlignment.Left
-	premiumLabel.Parent = premiumFrame
+	premiumLabel.Parent = premiumToggleFrame
 
-	local premiumBox = Instance.new("TextBox")
-	premiumBox.Size = UDim2.new(1, 0, 0, 32)
-	premiumBox.Position = UDim2.new(0, 0, 0, 18)
-	premiumBox.BackgroundColor3 = Color3.fromRGB(5, 5, 5)
-	premiumBox.TextColor3 = Color3.fromRGB(240, 240, 245)
-	premiumBox.PlaceholderColor3 = Color3.fromRGB(140, 140, 160)
-	premiumBox.PlaceholderText = "True/False"
-	premiumBox.Font = Enum.Font.GothamMedium
-	premiumBox.TextSize = 13
-	premiumBox.ClearTextOnFocus = false
-	premiumBox.Text = "False"
-	premiumBox.TextXAlignment = Enum.TextXAlignment.Left
-	premiumBox.Parent = premiumFrame
+	local premiumToggleBtn = Instance.new("Frame")
+	premiumToggleBtn.Size = UDim2.new(0, 38, 0, 20)
+	premiumToggleBtn.Position = UDim2.new(1, -46, 0.5, -10)
+	premiumToggleBtn.BackgroundColor3 = Color3.fromRGB(50, 50, 60)
+	premiumToggleBtn.Parent = premiumToggleFrame
+	Instance.new("UICorner", premiumToggleBtn).CornerRadius = UDim.new(1, 0)
 
-	premiumBox:GetPropertyChangedSignal("Text"):Connect(function()
-		local text = premiumBox.Text:lower()
-		if text ~= "true" and text ~= "false" then
-			premiumBox.Text = "False"
+	local premiumToggleKnob = Instance.new("Frame")
+	premiumToggleKnob.Size = UDim2.new(0, 16, 0, 16)
+	premiumToggleKnob.Position = UDim2.new(0, 2, 0.5, -8)
+	premiumToggleKnob.BackgroundColor3 = Color3.fromRGB(180, 180, 190)
+	premiumToggleKnob.Parent = premiumToggleBtn
+	Instance.new("UICorner", premiumToggleKnob).CornerRadius = UDim.new(1, 0)
+
+	local premiumClickBtn = Instance.new("TextButton")
+	premiumClickBtn.Size = UDim2.new(1, 0, 1, 0)
+	premiumClickBtn.BackgroundTransparency = 1
+	premiumClickBtn.Text = ""
+	premiumClickBtn.Parent = premiumToggleFrame
+
+	premiumClickBtn.MouseButton1Click:Connect(function()
+		premiumBadgeEnabled = not premiumBadgeEnabled
+		if premiumBadgeEnabled then
+			game:GetService("TweenService"):Create(premiumToggleBtn, TweenInfo.new(0.2), {BackgroundColor3 = Color3.fromRGB(255, 170, 0)}):Play()
+			game:GetService("TweenService"):Create(premiumToggleKnob, TweenInfo.new(0.2), {Position = UDim2.new(1, -18, 0.5, -8), BackgroundColor3 = Color3.fromRGB(255, 255, 255)}):Play()
+			game:GetService("TweenService"):Create(premiumIcon, TweenInfo.new(0.2), {ImageColor3 = Color3.fromRGB(255, 170, 0)}):Play()
+			premiumLabel.TextColor3 = Color3.fromRGB(220, 220, 230)
+		else
+			game:GetService("TweenService"):Create(premiumToggleBtn, TweenInfo.new(0.2), {BackgroundColor3 = Color3.fromRGB(50, 50, 60)}):Play()
+			game:GetService("TweenService"):Create(premiumToggleKnob, TweenInfo.new(0.2), {Position = UDim2.new(0, 2, 0.5, -8), BackgroundColor3 = Color3.fromRGB(180, 180, 190)}):Play()
+			game:GetService("TweenService"):Create(premiumIcon, TweenInfo.new(0.2), {ImageColor3 = Color3.fromRGB(140, 140, 160)}):Play()
+			premiumLabel.TextColor3 = Color3.fromRGB(180, 180, 190)
 		end
-	end)
-
-	local premiumCorner = Instance.new("UICorner")
-	premiumCorner.CornerRadius = UDim.new(0, 8)
-	premiumCorner.Parent = premiumBox
-
-	local premiumStroke = Instance.new("UIStroke")
-	premiumStroke.Color = Color3.fromRGB(65, 65, 85)
-	premiumStroke.Thickness = 1
-	premiumStroke.Transparency = 0.6
-	premiumStroke.Parent = premiumBox
-
-	local premiumPadding = Instance.new("UIPadding")
-	premiumPadding.PaddingLeft = UDim.new(0, 10)
-	premiumPadding.Parent = premiumBox
-
-	premiumBox.Focused:Connect(function()
-		game:GetService("TweenService"):Create(premiumStroke, TweenInfo.new(0.2), {
-			Transparency = 0.2,
-			Color = Color3.fromRGB(80, 120, 200)
-		}):Play()
-	end)
-	premiumBox.FocusLost:Connect(function()
-		game:GetService("TweenService"):Create(premiumStroke, TweenInfo.new(0.2), {
-			Transparency = 0.6,
-			Color = Color3.fromRGB(65, 65, 85)
-		}):Play()
-	end)
-
-	-- Apply button
-	local applyButton = Instance.new("TextButton")
-	applyButton.LayoutOrder = 7
-	applyButton.Size = UDim2.new(1, 0, 0, 42)
-	applyButton.BackgroundColor3 = Color3.fromRGB(25, 60, 180)
-	applyButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-	applyButton.Font = Enum.Font.GothamBold
-	applyButton.TextSize = 15
-	applyButton.Text = "Frame"
-	applyButton.AutoButtonColor = false
-	applyButton.Parent = frameContent
-
-	local applyCorner = Instance.new("UICorner")
-	applyCorner.CornerRadius = UDim.new(0, 12)
-	applyCorner.Parent = applyButton
-
-	local applyGradient = Instance.new("UIGradient")
-	applyGradient.Color = ColorSequence.new{
-		ColorSequenceKeypoint.new(0, Color3.fromRGB(35, 70, 200)),
-		ColorSequenceKeypoint.new(0.5, Color3.fromRGB(25, 60, 180)),
-		ColorSequenceKeypoint.new(1, Color3.fromRGB(20, 50, 160))
-	}
-	applyGradient.Rotation = 90
-	applyGradient.Parent = applyButton
-
-	local applyStroke = Instance.new("UIStroke")
-	applyStroke.Color = Color3.fromRGB(60, 90, 220)
-	applyStroke.Thickness = 1
-	applyStroke.Transparency = 0.7
-	applyStroke.Parent = applyButton
-
-	-- Apply button hover effects
-	local originalApplyColor = applyGradient.Color
-	local hoverApplyColor = ColorSequence.new{
-		ColorSequenceKeypoint.new(0, Color3.fromRGB(45, 80, 220)),
-		ColorSequenceKeypoint.new(0.5, Color3.fromRGB(35, 70, 200)),
-		ColorSequenceKeypoint.new(1, Color3.fromRGB(30, 60, 180))
-	}
-
-	local originalApplyStrokeColor = applyStroke.Color
-	local hoverApplyStrokeColor = Color3.fromRGB(80, 110, 240)
-
-	applyButton.MouseEnter:Connect(function()
-		local tween = game:GetService("TweenService"):Create(applyGradient, TweenInfo.new(0.25, Enum.EasingStyle.Quart), {Color = hoverApplyColor})
-		tween:Play()
-		local strokeTween = game:GetService("TweenService"):Create(applyStroke, TweenInfo.new(0.25, Enum.EasingStyle.Quart), {
-			Transparency = 0.3,
-			Color = hoverApplyStrokeColor
-		})
-		strokeTween:Play()
-	end)
-
-	applyButton.MouseLeave:Connect(function()
-		local tween = game:GetService("TweenService"):Create(applyGradient, TweenInfo.new(0.25, Enum.EasingStyle.Quart), {Color = originalApplyColor})
-		tween:Play()
-		local strokeTween = game:GetService("TweenService"):Create(applyStroke, TweenInfo.new(0.25, Enum.EasingStyle.Quart), {
-			Transparency = 0.7,
-			Color = originalApplyStrokeColor
-		})
-		strokeTween:Play()
 	end)
 
 	-- Apply button
@@ -4524,7 +4484,7 @@ local function createGUI()
 
 	local function setStatus(text, color, duration, progress)
 		status.Text = text
-		status.TextColor3 = color
+		status.TextColor3 = color or themeColor
 
 		-- Update progress bar
 		if progress then
@@ -4543,7 +4503,7 @@ local function createGUI()
 			task.spawn(function()
 				task.wait(duration)
 				status.Text = "Ready"
-				status.TextColor3 = Color3.fromRGB(180, 220, 180)
+				status.TextColor3 = themeColor
 				local tween = game:GetService("TweenService"):Create(progressBar, TweenInfo.new(0.3), {
 					Size = UDim2.new(0, 0, 0, 2)
 				})
@@ -4557,7 +4517,7 @@ local function createGUI()
 		local loadingConnection
 		loadingConnection = game:GetService("RunService").Heartbeat:Connect(function()
 			loadingDots = (loadingDots + 1) % 4
-			local dots = string.rep("â—", loadingDots) .. string.rep("â—‹", 3 - loadingDots)
+			local dots = string.rep("●", loadingDots) .. string.rep("○", 3 - loadingDots)
 			button.Text = "Processing" .. dots
 		end)
 		return loadingConnection
@@ -4649,10 +4609,9 @@ local function createGUI()
 		loadingAnim:Disconnect()
 
 		if success and result then
-			setStatus("Avatar applied successfully to " .. targetPlayer.Name, Color3.fromRGB(25, 60, 180), 4, 1.0)
-			applyButton.Text = "âœ“ Applied!"
-			local verifiedIcon = verifiedBox.Text:lower() == "true"
-			local premiumIcon = premiumBox.Text:lower() == "true"
+			setStatus("Avatar applied successfully to " .. targetPlayer.Name, themeColor, 4, 1.0)
+			applyButton.Text = "✓ Applied!"
+			log(LOG_LEVEL.INFO, "Successfully applied avatar from UserId %d to %s", actualSourceUserId or sourceUserId, targetPlayer.Name)
 			
 			-- Also apply stat spoofing if values are entered
 			local winsValue = parseStatInput(winsBox.Text)
@@ -4662,6 +4621,9 @@ local function createGUI()
 				local statSuccess, statErr = spoofLeaderstats(targetPlayer, "Wins", winsValue)
 				if statSuccess then
 					startStatMonitor(targetPlayer, "Wins", winsValue)
+					log(LOG_LEVEL.INFO, "Spoofed Wins to %s for %s", formatStatNumber(winsValue), targetPlayer.Name)
+				else
+					log(LOG_LEVEL.WARN, "Failed to spoof Wins: %s", tostring(statErr))
 				end
 			end
 			
@@ -4669,28 +4631,42 @@ local function createGUI()
 				local statSuccess, statErr = spoofLeaderstats(targetPlayer, "Elims", elimsValue)
 				if statSuccess then
 					startStatMonitor(targetPlayer, "Elims", elimsValue)
+					log(LOG_LEVEL.INFO, "Spoofed Elims to %s for %s", formatStatNumber(elimsValue), targetPlayer.Name)
+				else
+					log(LOG_LEVEL.WARN, "Failed to spoof Elims: %s", tostring(statErr))
 				end
-			end
-			
-			-- Store icon settings on player
-			if verifiedIcon or premiumIcon then
-				targetPlayer:SetAttribute("VerifiedIcon", verifiedIcon)
-				targetPlayer:SetAttribute("PremiumIcon", premiumIcon)
 			end
 			
 			task.wait(1.5)
 			applyButton.Text = "Frame"
 		else
 			local errorText = "Failed to apply avatar"
+			local detailedError = ""
 
 			if type(result) == "string" then
 				errorText = result
 			elseif errorMsg and type(errorMsg) == "string" then
 				errorText = errorMsg
+			elseif not success then
+				errorText = "Unknown error occurred"
+				detailedError = tostring(result)
+			end
+
+			-- Provide helpful suggestions based on error type
+			if errorText:find("character") then
+				errorText = errorText .. " - Target player may have left the game"
+			elseif errorText:find("avatar") then
+				errorText = errorText .. " - Source avatar may be private or invalid"
+			elseif errorText:find("respawn") then
+				errorText = errorText .. " - Try again after target stops moving"
 			end
 
 			setStatus(errorText, Color3.fromRGB(255, 120, 120), 6, 0)
-			applyButton.Text = "âœ— Failed"
+			applyButton.Text = "✗ Failed"
+			log(LOG_LEVEL.ERROR, "Avatar copy failed: %s", errorText)
+			if detailedError ~= "" then
+				log(LOG_LEVEL.DEBUG, "Detailed error: %s", detailedError)
+			end
 
 			task.wait(2)
 			applyButton.Text = "Frame"
@@ -4793,7 +4769,7 @@ local function createGUI()
 			if statsReverted then
 				msg = msg .. " (avatar + stats)"
 			end
-			setStatus(msg, Color3.fromRGB(25, 60, 180), 4)
+			setStatus(msg, themeColor, 4)
 			revertButton.Text = "Reverted!"
 			task.wait(1)
 			revertButton.Text = "Revert Changes"
@@ -4811,193 +4787,92 @@ local function createGUI()
 	-- SELF TAB CONTENT
 	-- ============================================
 
-
-	-- Verified and Premium icon fields (above source)
-	local selfIconsRow = Instance.new("Frame")
-	selfIconsRow.LayoutOrder = 0
-	selfIconsRow.Size = UDim2.new(1, 0, 0, 44)
-	selfIconsRow.BackgroundTransparency = 1
-	selfIconsRow.Parent = selfContent
-
-	local selfIconsLayout = Instance.new("UIListLayout")
-	selfIconsLayout.FillDirection = Enum.FillDirection.Horizontal
-	selfIconsLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
-	selfIconsLayout.Padding = UDim.new(0, 10)
-	selfIconsLayout.Parent = selfIconsRow
-
-	-- Verified field
-	local selfVerifiedFrame = Instance.new("Frame")
-	selfVerifiedFrame.Name = "SelfVerifiedFrame"
-	selfVerifiedFrame.Size = UDim2.new(0.48, 0, 1, 0)
-	selfVerifiedFrame.BackgroundTransparency = 1
-	selfVerifiedFrame.Parent = selfIconsRow
-
-	local selfVerifiedLabel = Instance.new("TextLabel")
-	selfVerifiedLabel.Size = UDim2.new(1, 0, 0, 18)
-	selfVerifiedLabel.BackgroundTransparency = 1
-	selfVerifiedLabel.Text = "â€¢ Verified Icon"
-	selfVerifiedLabel.TextColor3 = Color3.fromRGB(200, 200, 210)
-	selfVerifiedLabel.Font = Enum.Font.GothamSemibold
-	selfVerifiedLabel.TextSize = 13
-	selfVerifiedLabel.TextXAlignment = Enum.TextXAlignment.Left
-	selfVerifiedLabel.Parent = selfVerifiedFrame
-
-	local selfVerifiedBox = Instance.new("TextBox")
-	selfVerifiedBox.Size = UDim2.new(1, 0, 0, 26)
-	selfVerifiedBox.Position = UDim2.new(0, 0, 0, 18)
-	selfVerifiedBox.BackgroundColor3 = Color3.fromRGB(5, 5, 5)
-	selfVerifiedBox.TextColor3 = Color3.fromRGB(240, 240, 245)
-	selfVerifiedBox.PlaceholderColor3 = Color3.fromRGB(140, 140, 160)
-	selfVerifiedBox.PlaceholderText = "True/False"
-	selfVerifiedBox.Font = Enum.Font.GothamMedium
-	selfVerifiedBox.TextSize = 13
-	selfVerifiedBox.ClearTextOnFocus = false
-	selfVerifiedBox.Text = "False"
-	selfVerifiedBox.TextXAlignment = Enum.TextXAlignment.Left
-	selfVerifiedBox.Parent = selfVerifiedFrame
-
-	selfVerifiedBox:GetPropertyChangedSignal("Text"):Connect(function()
-		local text = selfVerifiedBox.Text:lower()
-		if text ~= "true" and text ~= "false" then
-			selfVerifiedBox.Text = "False"
-		end
-	end)
-
-	local selfVerifiedCorner = Instance.new("UICorner")
-	selfVerifiedCorner.CornerRadius = UDim.new(0, 8)
-	selfVerifiedCorner.Parent = selfVerifiedBox
-
-	local selfVerifiedStroke = Instance.new("UIStroke")
-	selfVerifiedStroke.Color = Color3.fromRGB(65, 65, 85)
-	selfVerifiedStroke.Thickness = 1
-	selfVerifiedStroke.Transparency = 0.6
-	selfVerifiedStroke.Parent = selfVerifiedBox
-
-	local selfVerifiedPadding = Instance.new("UIPadding")
-	selfVerifiedPadding.PaddingLeft = UDim.new(0, 10)
-	selfVerifiedPadding.Parent = selfVerifiedBox
-
-	-- Premium field
-	local selfPremiumFrame = Instance.new("Frame")
-	selfPremiumFrame.Name = "SelfPremiumFrame"
-	selfPremiumFrame.Size = UDim2.new(0.48, 0, 1, 0)
-	selfPremiumFrame.BackgroundTransparency = 1
-	selfPremiumFrame.Parent = selfIconsRow
-
-	local selfPremiumLabel = Instance.new("TextLabel")
-	selfPremiumLabel.Size = UDim2.new(1, 0, 0, 18)
-	selfPremiumLabel.BackgroundTransparency = 1
-	selfPremiumLabel.Text = "â€¢ Premium Icon"
-	selfPremiumLabel.TextColor3 = Color3.fromRGB(200, 200, 210)
-	selfPremiumLabel.Font = Enum.Font.GothamSemibold
-	selfPremiumLabel.TextSize = 13
-	selfPremiumLabel.TextXAlignment = Enum.TextXAlignment.Left
-	selfPremiumLabel.Parent = selfPremiumFrame
-
-	local selfPremiumBox = Instance.new("TextBox")
-	selfPremiumBox.Size = UDim2.new(1, 0, 0, 26)
-	selfPremiumBox.Position = UDim2.new(0, 0, 0, 18)
-	selfPremiumBox.BackgroundColor3 = Color3.fromRGB(5, 5, 5)
-	selfPremiumBox.TextColor3 = Color3.fromRGB(240, 240, 245)
-	selfPremiumBox.PlaceholderColor3 = Color3.fromRGB(140, 140, 160)
-	selfPremiumBox.PlaceholderText = "True/False"
-	selfPremiumBox.Font = Enum.Font.GothamMedium
-	selfPremiumBox.TextSize = 13
-	selfPremiumBox.ClearTextOnFocus = false
-	selfPremiumBox.Text = "False"
-	selfPremiumBox.TextXAlignment = Enum.TextXAlignment.Left
-	selfPremiumBox.Parent = selfPremiumFrame
-
-	selfPremiumBox:GetPropertyChangedSignal("Text"):Connect(function()
-		local text = selfPremiumBox.Text:lower()
-		if text ~= "true" and text ~= "false" then
-			selfPremiumBox.Text = "False"
-		end
-	end)
-
-	local selfPremiumCorner = Instance.new("UICorner")
-	selfPremiumCorner.CornerRadius = UDim.new(0, 8)
-	selfPremiumCorner.Parent = selfPremiumBox
-
-	local selfPremiumStroke = Instance.new("UIStroke")
-	selfPremiumStroke.Color = Color3.fromRGB(65, 65, 85)
-	selfPremiumStroke.Thickness = 1
-	selfPremiumStroke.Transparency = 0.6
-	selfPremiumStroke.Parent = selfPremiumBox
-
-	local selfPremiumPadding = Instance.new("UIPadding")
-	selfPremiumPadding.PaddingLeft = UDim.new(0, 10)
-	selfPremiumPadding.Parent = selfPremiumBox
-
-	-- Source field (large)
+	-- Source field (large) with avatar preview
 	local selfSrcLabel = Instance.new("TextLabel")
 	selfSrcLabel.LayoutOrder = 1
 	selfSrcLabel.Size = UDim2.new(1, 0, 0, 18)
 	selfSrcLabel.BackgroundTransparency = 1
-	selfSrcLabel.Text = "â€¢ Source Player"
+	selfSrcLabel.Text = "• Source Player"
 	selfSrcLabel.TextColor3 = Color3.fromRGB(200, 200, 210)
 	selfSrcLabel.Font = Enum.Font.GothamSemibold
 	selfSrcLabel.TextSize = 13
 	selfSrcLabel.TextXAlignment = Enum.TextXAlignment.Left
 	selfSrcLabel.Parent = selfContent
 
-	local selfSrcLabelStroke = Instance.new("UIStroke")
-	selfSrcLabelStroke.Color = Color3.fromRGB(0, 0, 0)
-	selfSrcLabelStroke.Thickness = 0.5
-	selfSrcLabelStroke.Transparency = 0.7
-	selfSrcLabelStroke.Parent = selfSrcLabel
+	-- Self source row with avatar preview
+	local selfSourceRow = Instance.new("Frame")
+	selfSourceRow.LayoutOrder = 2
+	selfSourceRow.Size = UDim2.new(1, 0, 0, 50)
+	selfSourceRow.BackgroundTransparency = 1
+	selfSourceRow.Parent = selfContent
 
-	local selfSourceContainer = Instance.new("Frame")
-	selfSourceContainer.LayoutOrder = 2
-	selfSourceContainer.Size = UDim2.new(1, 0, 0, 44)
-	selfSourceContainer.BackgroundColor3 = Color3.fromRGB(5, 5, 5)
-	selfSourceContainer.BorderSizePixel = 0
-	selfSourceContainer.Parent = selfContent
+	local selfAvatarFrame = Instance.new("Frame")
+	selfAvatarFrame.Size = UDim2.new(0, 44, 0, 44)
+	selfAvatarFrame.Position = UDim2.new(0, 0, 0, 0)
+	selfAvatarFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
+	selfAvatarFrame.Parent = selfSourceRow
+	Instance.new("UICorner", selfAvatarFrame).CornerRadius = UDim.new(0, 8)
+	local selfAvatarStroke = Instance.new("UIStroke", selfAvatarFrame)
+	selfAvatarStroke.Color = themeColor
+	selfAvatarStroke.Thickness = 1.5
+	selfAvatarStroke.Transparency = 0.5
 
-	local selfSrcCorner = Instance.new("UICorner")
-	selfSrcCorner.CornerRadius = UDim.new(0, 10)
-	selfSrcCorner.Parent = selfSourceContainer
-
-	local selfSrcStroke = Instance.new("UIStroke")
-	selfSrcStroke.Color = Color3.fromRGB(65, 65, 85)
-	selfSrcStroke.Thickness = 1
-	selfSrcStroke.Transparency = 0.6
-	selfSrcStroke.Parent = selfSourceContainer
+	local selfAvatarImage = Instance.new("ImageLabel")
+	selfAvatarImage.Size = UDim2.new(1, -4, 1, -4)
+	selfAvatarImage.Position = UDim2.new(0, 2, 0, 2)
+	selfAvatarImage.BackgroundTransparency = 1
+	selfAvatarImage.Image = ""
+	selfAvatarImage.ScaleType = Enum.ScaleType.Fit
+	selfAvatarImage.Parent = selfAvatarFrame
+	Instance.new("UICorner", selfAvatarImage).CornerRadius = UDim.new(0, 6)
 
 	local selfSourceBox = Instance.new("TextBox")
-	selfSourceBox.Size = UDim2.new(1, 0, 1, 0)
-	selfSourceBox.BackgroundTransparency = 1
+	selfSourceBox.Size = UDim2.new(1, -54, 0, 44)
+	selfSourceBox.Position = UDim2.new(0, 50, 0, 0)
+	selfSourceBox.BackgroundColor3 = Color3.fromRGB(5, 5, 5)
 	selfSourceBox.TextColor3 = Color3.fromRGB(240, 240, 245)
 	selfSourceBox.PlaceholderColor3 = Color3.fromRGB(140, 140, 160)
-	selfSourceBox.PlaceholderText = "â€¢ Enter UserID"
+	selfSourceBox.PlaceholderText = "• Enter UserID"
 	selfSourceBox.Font = Enum.Font.GothamMedium
 	selfSourceBox.TextSize = 14
 	selfSourceBox.ClearTextOnFocus = false
 	selfSourceBox.Text = ""
 	selfSourceBox.TextXAlignment = Enum.TextXAlignment.Left
-	selfSourceBox.Parent = selfSourceContainer
+	selfSourceBox.Parent = selfSourceRow
 
 	selfSourceBox:GetPropertyChangedSignal("Text"):Connect(function()
 		if #selfSourceBox.Text > 20 then selfSourceBox.Text = selfSourceBox.Text:sub(1, 20) end
+		-- Update avatar preview
+		local userId = tonumber(selfSourceBox.Text)
+		if userId and userId > 0 then
+			selfAvatarImage.Image = "https://www.roblox.com/headshot-thumbnail/image?userId=" .. userId .. "&width=150&height=150&format=png"
+		else
+			selfAvatarImage.Image = ""
+		end
 	end)
 
 	local selfSrcPad = Instance.new("UIPadding")
-	selfSrcPad.PaddingLeft = UDim.new(0, 14)
-	selfSrcPad.PaddingRight = UDim.new(0, 14)
+	selfSrcPad.PaddingLeft = UDim.new(0, 12)
+	selfSrcPad.PaddingRight = UDim.new(0, 12)
 	selfSrcPad.Parent = selfSourceBox
+	Instance.new("UICorner", selfSourceBox).CornerRadius = UDim.new(0, 10)
+	local selfSrcStroke = Instance.new("UIStroke", selfSourceBox)
+	selfSrcStroke.Color = themeColor
+	selfSrcStroke.Thickness = 1.5
+	selfSrcStroke.Transparency = 0.5
 
 	selfSourceBox.Focused:Connect(function()
 		game:GetService("TweenService"):Create(selfSrcStroke, TweenInfo.new(0.2), {
 			Transparency = 0,
-			Color = Color3.fromRGB(60, 100, 220),
+			Color = themeColor,
 			Thickness = 2
 		}):Play()
 	end)
 	selfSourceBox.FocusLost:Connect(function()
 		game:GetService("TweenService"):Create(selfSrcStroke, TweenInfo.new(0.2), {
-			Transparency = 0.6,
-			Color = Color3.fromRGB(65, 65, 85),
-			Thickness = 1
+			Transparency = 0.5,
+			Color = themeColor,
+			Thickness = 1.5
 		}):Play()
 	end)
 
@@ -5033,7 +4908,7 @@ local function createGUI()
 	selfWinsLabel.LayoutOrder = 1
 	selfWinsLabel.Size = UDim2.new(1, 0, 0, 16)
 	selfWinsLabel.BackgroundTransparency = 1
-	selfWinsLabel.Text = "â€¢ Wins"
+	selfWinsLabel.Text = "• Wins"
 	selfWinsLabel.TextColor3 = Color3.fromRGB(200, 200, 210)
 	selfWinsLabel.Font = Enum.Font.GothamSemibold
 	selfWinsLabel.TextSize = 13
@@ -5046,7 +4921,7 @@ local function createGUI()
 	selfWinsBox.BackgroundColor3 = Color3.fromRGB(5, 5, 5)
 	selfWinsBox.TextColor3 = Color3.fromRGB(240, 240, 245)
 	selfWinsBox.PlaceholderColor3 = Color3.fromRGB(140, 140, 160)
-	selfWinsBox.PlaceholderText = "â€¢ Enter Wins"
+	selfWinsBox.PlaceholderText = "• Enter Wins"
 	selfWinsBox.Font = Enum.Font.GothamMedium
 	selfWinsBox.TextSize = 13
 	selfWinsBox.ClearTextOnFocus = false
@@ -5063,9 +4938,9 @@ local function createGUI()
 	selfWinsCorner.Parent = selfWinsBox
 
 	local selfWinsStroke = Instance.new("UIStroke")
-	selfWinsStroke.Color = Color3.fromRGB(65, 65, 85)
-	selfWinsStroke.Thickness = 1
-	selfWinsStroke.Transparency = 0.6
+	selfWinsStroke.Color = themeColor
+	selfWinsStroke.Thickness = 1.5
+	selfWinsStroke.Transparency = 0.5
 	selfWinsStroke.Parent = selfWinsBox
 
 	local selfWinsPadding = Instance.new("UIPadding")
@@ -5074,14 +4949,16 @@ local function createGUI()
 
 	selfWinsBox.Focused:Connect(function()
 		game:GetService("TweenService"):Create(selfWinsStroke, TweenInfo.new(0.2), {
-			Transparency = 0.2,
-			Color = Color3.fromRGB(80, 120, 200)
+			Transparency = 0,
+			Color = themeColor,
+			Thickness = 2
 		}):Play()
 	end)
 	selfWinsBox.FocusLost:Connect(function()
 		game:GetService("TweenService"):Create(selfWinsStroke, TweenInfo.new(0.2), {
-			Transparency = 0.6,
-			Color = Color3.fromRGB(65, 65, 85)
+			Transparency = 0.5,
+			Color = themeColor,
+			Thickness = 1.5
 		}):Play()
 	end)
 
@@ -5090,7 +4967,7 @@ local function createGUI()
 	selfCoinsLabel.LayoutOrder = 3
 	selfCoinsLabel.Size = UDim2.new(1, 0, 0, 16)
 	selfCoinsLabel.BackgroundTransparency = 1
-	selfCoinsLabel.Text = "â€¢ Coins"
+	selfCoinsLabel.Text = "• Coins"
 	selfCoinsLabel.TextColor3 = Color3.fromRGB(200, 200, 210)
 	selfCoinsLabel.Font = Enum.Font.GothamSemibold
 	selfCoinsLabel.TextSize = 13
@@ -5103,7 +4980,7 @@ local function createGUI()
 	selfCoinsBox.BackgroundColor3 = Color3.fromRGB(5, 5, 5)
 	selfCoinsBox.TextColor3 = Color3.fromRGB(240, 240, 245)
 	selfCoinsBox.PlaceholderColor3 = Color3.fromRGB(140, 140, 160)
-	selfCoinsBox.PlaceholderText = "â€¢ Enter Coins"
+	selfCoinsBox.PlaceholderText = "• Enter Coins"
 	selfCoinsBox.Font = Enum.Font.GothamMedium
 	selfCoinsBox.TextSize = 13
 	selfCoinsBox.ClearTextOnFocus = false
@@ -5120,9 +4997,9 @@ local function createGUI()
 	selfCoinsCorner.Parent = selfCoinsBox
 
 	local selfCoinsStroke = Instance.new("UIStroke")
-	selfCoinsStroke.Color = Color3.fromRGB(65, 65, 85)
-	selfCoinsStroke.Thickness = 1
-	selfCoinsStroke.Transparency = 0.6
+	selfCoinsStroke.Color = themeColor
+	selfCoinsStroke.Thickness = 1.5
+	selfCoinsStroke.Transparency = 0.5
 	selfCoinsStroke.Parent = selfCoinsBox
 
 	local selfCoinsPadding = Instance.new("UIPadding")
@@ -5131,14 +5008,16 @@ local function createGUI()
 
 	selfCoinsBox.Focused:Connect(function()
 		game:GetService("TweenService"):Create(selfCoinsStroke, TweenInfo.new(0.2), {
-			Transparency = 0.2,
-			Color = Color3.fromRGB(80, 120, 200)
+			Transparency = 0,
+			Color = themeColor,
+			Thickness = 2
 		}):Play()
 	end)
 	selfCoinsBox.FocusLost:Connect(function()
 		game:GetService("TweenService"):Create(selfCoinsStroke, TweenInfo.new(0.2), {
-			Transparency = 0.6,
-			Color = Color3.fromRGB(65, 65, 85)
+			Transparency = 0.5,
+			Color = themeColor,
+			Thickness = 1.5
 		}):Play()
 	end)
 
@@ -5160,7 +5039,7 @@ local function createGUI()
 	selfElimsLabel.LayoutOrder = 1
 	selfElimsLabel.Size = UDim2.new(1, 0, 0, 16)
 	selfElimsLabel.BackgroundTransparency = 1
-	selfElimsLabel.Text = "â€¢ Elims"
+	selfElimsLabel.Text = "• Elims"
 	selfElimsLabel.TextColor3 = Color3.fromRGB(200, 200, 210)
 	selfElimsLabel.Font = Enum.Font.GothamSemibold
 	selfElimsLabel.TextSize = 13
@@ -5173,7 +5052,7 @@ local function createGUI()
 	selfElimsBox.BackgroundColor3 = Color3.fromRGB(5, 5, 5)
 	selfElimsBox.TextColor3 = Color3.fromRGB(240, 240, 245)
 	selfElimsBox.PlaceholderColor3 = Color3.fromRGB(140, 140, 160)
-	selfElimsBox.PlaceholderText = "â€¢ Enter Elims"
+	selfElimsBox.PlaceholderText = "• Enter Elims"
 	selfElimsBox.Font = Enum.Font.GothamMedium
 	selfElimsBox.TextSize = 13
 	selfElimsBox.ClearTextOnFocus = false
@@ -5190,9 +5069,9 @@ local function createGUI()
 	selfElimsCorner.Parent = selfElimsBox
 
 	local selfElimsStroke = Instance.new("UIStroke")
-	selfElimsStroke.Color = Color3.fromRGB(65, 65, 85)
-	selfElimsStroke.Thickness = 1
-	selfElimsStroke.Transparency = 0.6
+	selfElimsStroke.Color = themeColor
+	selfElimsStroke.Thickness = 1.5
+	selfElimsStroke.Transparency = 0.5
 	selfElimsStroke.Parent = selfElimsBox
 
 	local selfElimsPadding = Instance.new("UIPadding")
@@ -5201,14 +5080,16 @@ local function createGUI()
 
 	selfElimsBox.Focused:Connect(function()
 		game:GetService("TweenService"):Create(selfElimsStroke, TweenInfo.new(0.2), {
-			Transparency = 0.2,
-			Color = Color3.fromRGB(80, 120, 200)
+			Transparency = 0,
+			Color = themeColor,
+			Thickness = 2
 		}):Play()
 	end)
 	selfElimsBox.FocusLost:Connect(function()
 		game:GetService("TweenService"):Create(selfElimsStroke, TweenInfo.new(0.2), {
-			Transparency = 0.6,
-			Color = Color3.fromRGB(65, 65, 85)
+			Transparency = 0.5,
+			Color = themeColor,
+			Thickness = 1.5
 		}):Play()
 	end)
 
@@ -5267,31 +5148,21 @@ local function createGUI()
 		local winsValue = parseStatInput(selfWinsBox.Text)
 		local elimsValue = parseStatInput(selfElimsBox.Text)
 		local coinsValue = parseStatInput(selfCoinsBox.Text)
-
+		
 		local hasSource = sourceText ~= ""
 		local hasStats = winsValue or elimsValue or coinsValue
-
-		-- Get verified/premium values from UI
-		local verifiedText = (selfVerifiedBox.Text or ""):lower()
-		local premiumText = (selfPremiumBox.Text or ""):lower()
-		local verifiedValue = (verifiedText == "true")
-		local premiumValue = (premiumText == "true")
-
-		-- Always set attributes for local player
-		LocalPlayer:SetAttribute("VerifiedIcon", verifiedValue)
-		LocalPlayer:SetAttribute("PremiumIcon", premiumValue)
-
+		
 		if not hasSource and not hasStats then
 			setStatus("Enter a UserID or stat values to spoof!", Color3.fromRGB(255, 120, 120), 3)
 			return
 		end
-
+		
 		selfSpoofButton.Active = false
 		local originalText = selfSpoofButton.Text
 		selfSpoofButton.Text = "Spoofing..."
-
+		
 		local spoofedItems = {}
-
+		
 		-- Spoof avatar if source UserID is provided
 		if hasSource then
 			local sourceValid, sourceError, sourceUserId = validateUserId(sourceText)
@@ -5301,13 +5172,13 @@ local function createGUI()
 				selfSpoofButton.Active = true
 				return
 			end
-
+			
 			setStatus("Spoofing your avatar...", Color3.fromRGB(255, 220, 140))
-
+			
 			local success, result = pcall(function()
 				return copyAvatarToPlayer(sourceUserId, LocalPlayer)
 			end)
-
+			
 			if success and result then
 				table.insert(spoofedItems, "Avatar")
 				log(LOG_LEVEL.INFO, "Self-spoofed avatar to UserId %d", sourceUserId)
@@ -5318,7 +5189,7 @@ local function createGUI()
 				return
 			end
 		end
-
+		
 		-- Spoof stats
 		if winsValue then
 			local success, err = spoofLeaderstats(LocalPlayer, "Wins", winsValue)
@@ -5329,7 +5200,7 @@ local function createGUI()
 				log(LOG_LEVEL.WARN, "Failed to spoof Wins: %s", tostring(err))
 			end
 		end
-
+		
 		if elimsValue then
 			local success, err = spoofLeaderstats(LocalPlayer, "Elims", elimsValue)
 			if success then
@@ -5339,7 +5210,7 @@ local function createGUI()
 				log(LOG_LEVEL.WARN, "Failed to spoof Elims: %s", tostring(err))
 			end
 		end
-
+		
 		if coinsValue then
 			local success, err = spoofLeaderstats(LocalPlayer, "Coins", coinsValue)
 			if success then
@@ -5349,15 +5220,15 @@ local function createGUI()
 				log(LOG_LEVEL.WARN, "Failed to spoof Coins: %s", tostring(err))
 			end
 		end
-
+		
 		if #spoofedItems > 0 then
-			setStatus("Spoofed: " .. table.concat(spoofedItems, ", "), Color3.fromRGB(25, 60, 180), 4)
+			setStatus("Spoofed: " .. table.concat(spoofedItems, ", "), themeColor, 4)
 			selfSpoofButton.Text = "✓ Spoofed!"
 			task.wait(1.5)
 		else
 			setStatus("Nothing to spoof!", Color3.fromRGB(255, 200, 120), 3)
 		end
-
+		
 		selfSpoofButton.Text = originalText
 		selfSpoofButton.Active = true
 	end)
@@ -5423,22 +5294,22 @@ local function createGUI()
 		stopAllStatMonitors(LocalPlayer)
 		
 		-- Revert stats
-		local success, result = revertLeaderstats(LocalPlayer)
-		if success then
+		local statsSuccess, statsResult = revertLeaderstats(LocalPlayer)
+		if statsSuccess then
 			table.insert(revertedItems, "Stats")
 		end
 		
-		-- Revert avatar
-		local revertSuccess = pcall(function()
+		-- Revert avatar - properly capture the return value
+		local pcallSuccess, revertResult = pcall(function()
 			return revertPlayer(LocalPlayer)
 		end)
-		if revertSuccess then
+		if pcallSuccess and revertResult then
 			table.insert(revertedItems, "Avatar")
 		end
 		
 		if #revertedItems > 0 then
-			setStatus("Reverted: " .. table.concat(revertedItems, ", "), Color3.fromRGB(25, 60, 180), 4)
-			selfRevertButton.Text = "âœ“ Reverted!"
+			setStatus("Reverted: " .. table.concat(revertedItems, ", "), themeColor, 4)
+			selfRevertButton.Text = "✓ Reverted!"
 			task.wait(1.5)
 		else
 			setStatus("Nothing to revert!", Color3.fromRGB(255, 200, 120), 3)
@@ -5457,7 +5328,7 @@ local function createGUI()
 	keybindLabel.LayoutOrder = 1
 	keybindLabel.Size = UDim2.new(1, 0, 0, 18)
 	keybindLabel.BackgroundTransparency = 1
-	keybindLabel.Text = "â€¢ Toggle Keybind"
+	keybindLabel.Text = "• Toggle Keybind"
 	keybindLabel.TextColor3 = Color3.fromRGB(200, 200, 210)
 	keybindLabel.Font = Enum.Font.GothamSemibold
 	keybindLabel.TextSize = 13
@@ -5559,7 +5430,7 @@ local function createGUI()
 	colorLabel.LayoutOrder = 3
 	colorLabel.Size = UDim2.new(1, 0, 0, 18)
 	colorLabel.BackgroundTransparency = 1
-	colorLabel.Text = "â€¢ Theme Color"
+	colorLabel.Text = "• Theme Color"
 	colorLabel.TextColor3 = Color3.fromRGB(200, 200, 210)
 	colorLabel.Font = Enum.Font.GothamSemibold
 	colorLabel.TextSize = 13
@@ -5880,7 +5751,7 @@ local function createGUI()
 		lbl.LayoutOrder = 8
 		lbl.Size = UDim2.new(1, 0, 0, 18)
 		lbl.BackgroundTransparency = 1
-		lbl.Text = "â€¢ Text Color"
+		lbl.Text = "• Text Color"
 		lbl.TextColor3 = Color3.fromRGB(200, 200, 210)
 		lbl.Font = Enum.Font.GothamSemibold
 		lbl.TextSize = 13
@@ -6016,7 +5887,7 @@ local function createGUI()
 		lbl.LayoutOrder = 13
 		lbl.Size = UDim2.new(1, 0, 0, 18)
 		lbl.BackgroundTransparency = 1
-		lbl.Text = "â€¢ Accent Color"
+		lbl.Text = "• Accent Color"
 		lbl.TextColor3 = Color3.fromRGB(200, 200, 210)
 		lbl.Font = Enum.Font.GothamSemibold
 		lbl.TextSize = 13
@@ -6303,23 +6174,4 @@ Players.PlayerRemoving:Connect(function(player)
 	log(LOG_LEVEL.DEBUG, "Cleaned up data for player %s (UserId: %d)", player.Name, userId)
 end)
 
--- Print initialization info
-print("We up opps down")
-if not hasExecutor then
-	print("Might wanna get a exec bro")
-end
-
--- Check for potential game compatibility issues
-local gameId = game.GameId
-local placeId = game.PlaceId
-log(LOG_LEVEL.INFO, "Game ID: %d, Place ID: %d", gameId, placeId)
-
--- Warn about games that might have custom respawn logic
-if placeId == 0 then
-	log(LOG_LEVEL.WARN, "Running in Roblox Studio - avatar features may not work properly")
-elseif gameId == 0 then
-	log(LOG_LEVEL.WARN, "Unknown game detected - respawn issues may occur")
-end
-
-log(LOG_LEVEL.INFO, "Script initialized successfully with memory management and respawn protection")
-
+-- Script initialization complete
